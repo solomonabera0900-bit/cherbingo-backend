@@ -1,141 +1,203 @@
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
 const cors = require('cors');
+const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(cors());
-
-const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
-});
-
-// የጨዋታ ክፍሎች (Rooms) እና ሁኔታዎቻቸው
-const rooms = {
-    play: { name: "Regular Play", fee: 10, numbersDrawn: [], timer: null, isRunning: false, players: {} },
-    super: { name: "SuperBingo", fee: 50, numbersDrawn: [], timer: null, isRunning: false, players: {} },
-    bonus: { name: "GoodBingo Bonus", fee: 0, numbersDrawn: [], timer: null, isRunning: false, players: {} }
-};
-
-// ቢንጎ ማሸነፉን ማረጋገጫ (1 Line ወይም 4 Corners)
-function checkBingoWin(card, drawnNumbers) {
-    const drawnSet = new Set(drawnNumbers);
-    
-    // 1. 4 Corners Check (አራቱ ኮርነሮች)
-    const corners = [card[0][0], card[0][4], card[4][0], card[4][4]];
-    const hasFourCorners = corners.every(num => num === 'FREE' || drawnSet.has(num));
-    if (hasFourCorners) return { win: true, type: "4 Corners (አራት ኮርነሮች)" };
-
-    // 2. Horizontal Lines Check (የአግድም መስመሮች)
-    for (let r = 0; r < 5; r++) {
-        if (card[r].every(num => num === 'FREE' || drawnSet.has(num))) {
-            return { win: true, type: `Horizontal Line ${r + 1}` };
-        }
-    }
-
-    // 3. Vertical Lines Check (የቁመት መስመሮች)
-    for (let c = 0; c < 5; c++) {
-        let colWin = true;
-        for (let r = 0; r < 5; r++) {
-            if (card[r][c] !== 'FREE' && !drawnSet.has(card[r][c])) {
-                colWin = false;
-                break;
-            }
-        }
-        if (colWin) return { win: true, type: `Vertical Line ${c + 1}` };
-    }
-
-    // 4. Diagonal Lines Check (የዲያጎናል/ሰያፍ መስመሮች)
-    let diag1 = true, diag2 = true;
-    for (let i = 0; i < 5; i++) {
-        if (card[i][i] !== 'FREE' && !drawnSet.has(card[i][i])) diag1 = false;
-        if (card[i][4 - i] !== 'FREE' && !drawnSet.has(card[i][4 - i])) diag2 = false;
-    }
-    if (diag1 || diag2) return { win: true, type: "Diagonal Line" };
-
-    return { win: false };
-}
-
-// ቁጥር በየጊዜው መጣያ (Game Loop)
-function startGameLoop(roomId) {
-    const room = rooms[roomId];
-    if (room.isRunning) return;
-    
-    room.isRunning = true;
-    room.numbersDrawn = [];
-
-    const availableNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
-    
-    room.timer = setInterval(() => {
-        if (availableNumbers.length === 0) {
-            clearInterval(room.timer);
-            room.isRunning = false;
-            io.to(roomId).emit('game_over', { message: "ጨዋታው አለቀ! አሸናፊ አልተገኘም።" });
-            return;
-        }
-
-        const randomIndex = Math.floor(Math.random() * availableNumbers.length);
-        const drawnNumber = availableNumbers.splice(randomIndex, 1)[0];
-        room.numbersDrawn.push(drawnNumber);
-
-        io.to(roomId).emit('number_drawn', {
-            number: drawnNumber,
-            allDrawn: room.numbersDrawn
-        });
-    }, 3000); // በየ 3 ሰከንዱ ቁጥር ይጣላል
-}
-
-io.on('connection', (socket) => {
-    console.log('ተጫዋች ተቀላቅሏል:', socket.id);
-
-    // ወደ ክፍል መግባት
-    socket.on('join_room', ({ roomId, userId, userName, card }) => {
-        socket.join(roomId);
-        if (!rooms[roomId]) return;
-
-        rooms[roomId].players[socket.id] = { userId, userName, card };
-        
-        socket.emit('room_joined', {
-            roomId,
-            drawnNumbers: rooms[roomId].numbersDrawn,
-            isRunning: rooms[roomId].isRunning
-        });
-
-        // ቢያንስ 1 ተጫዋች ሲገባ ጨዋታው ይጀምራል
-        if (!rooms[roomId].isRunning) {
-            startGameLoop(roomId);
-        }
-    });
-
-    // BINGO ጥያቄ ሲላክ
-    socket.on('claim_bingo', ({ roomId, card }) => {
-        const room = rooms[roomId];
-        if (!room) return;
-
-        const result = checkBingoWin(card, room.numbersDrawn);
-
-        if (result.win) {
-            clearInterval(room.timer);
-            room.isRunning = false;
-            
-            const winner = room.players[socket.id] || { userName: "ተጫዋች" };
-            io.to(roomId).emit('bingo_winner', {
-                winnerName: winner.userName,
-                winType: result.type,
-                message: `🎉 BINGO! ${winner.userName} በ ${result.type} አሸንፏል!`
-            });
-        } else {
-            socket.emit('bingo_rejected', { message: "❌ ገና አልሞሉም! እባክዎ እንደገና ያረጋግጡ።" });
-        }
-    });
-
-    socket.on('disconnect', () => {
-        for (const roomId in rooms) {
-            delete rooms[roomId].players[socket.id];
-        }
-    });
-});
+app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`cherbingo-backend running on port ${PORT}`));
+const BOT_TOKEN = process.env.BOT_TOKEN || "8677559720:AAF5alz9e2Ejoxb-HTKehicesJTyfRkrArE";
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://cherbingo.vercel.app";
+
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+// In-Memory Database
+const usersDb = {};
+
+function getUserData(userId) {
+    if (!usersDb[userId]) {
+        usersDb[userId] = {
+            registered: true,
+            balance: 50.00,
+            history: [
+                { type: "GAME BUY", time: "14:12", amt: 10.00, bal: 50.00, status: "SUCCESS" },
+                { type: "DEPOSIT TELE BIRR", time: "14:11", amt: 20.00, bal: 60.00, status: "SUCCESS" }
+            ]
+        };
+    }
+    return usersDb[userId];
+}
+
+// ---------------- TELEGRAM BOT COMMANDS ----------------
+
+bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    const firstName = msg.from.first_name || "ተጫዋች";
+    const text = `👋 **እንኳን ወደ Cherbingo በሰላም መጡ፣ ${firstName}!**\n\n` +
+                 `🎮 ጨዋታ መጀመር ከፈለጉ /play የሚለውን ይጫኑ ወይም ከታች ያሉትን ትዕዛዞች ይጠቀሙ::`;
+    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/register/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const userData = getUserData(userId);
+
+    if (userData.registered) {
+        bot.sendMessage(chatId, "✅ ቀደም ብለው ተመዝግበዋል።");
+    } else {
+        userData.registered = true;
+        bot.sendMessage(chatId, "✅ ምዝገባዎ በስኬት ተጠናቋል!");
+    }
+});
+
+bot.onText(/\/play/, (msg) => {
+    const chatId = msg.chat.id;
+    const options = {
+        parse_mode: "Markdown",
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "🎮 PLAY  |  10 ብር", web_app: { url: FRONTEND_URL } }],
+                [{ text: "🔥 SuperBingo  |  50 ብር", web_app: { url: FRONTEND_URL } }],
+                [{ text: "⚽ Cherbingo Bonus", web_app: { url: FRONTEND_URL } }]
+            ]
+        }
+    };
+    bot.sendMessage(chatId, "📍 **PLAY IN:**\nለመጫወት የሚፈልጉትን ክፍል (Room) ይምረጡ:", options);
+});
+
+bot.onText(/\/balance/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const balance = getUserData(userId).balance;
+    bot.sendMessage(chatId, `💰 **ቀሪ ሂሳብ (Available): ${balance.toFixed(2)} ETB**`, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/deposit/, (msg) => {
+    const chatId = msg.chat.id;
+    const options = {
+        parse_mode: "Markdown",
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "CBE BIRR", callback_data: "dep_cbe" },
+                    { text: "TELE BIRR", callback_data: "dep_tele" }
+                ]
+            ]
+        }
+    };
+    bot.sendMessage(chatId, "💳 **የማስገቢያ መንገድ ይምረጡ (Select Deposit Method)**\n\nእባክዎ ሂሳብ ለመሙላት የሚጠቀሙበትን መንገድ ይምረጡ:", options);
+});
+
+bot.onText(/\/withdraw/, (msg) => {
+    const chatId = msg.chat.id;
+    const text = "📬 **ገንዘብ ያውጡ (Withdraw Funds)**\n\n" +
+                 "እባክዎ የሚያወጡትን የገንዘብ መጠን እና የሂሳብ ቁጥርዎን ያስገቡ:\n" +
+                 "*(ምሳሌ፡ 100 0912345678 Telebirr)*";
+    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/history/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const history = getUserData(userId).history;
+
+    let text = "📜 **የክፍያ ታሪክ**\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n";
+    history.forEach((item) => {
+        text += `🔹 **${item.type} (${item.time})**\n` +
+                `💰 **መጠን:** ${item.amt.toFixed(2)} ETB\n` +
+                `💳 **ቀሪ ሂሳብ:** ${item.bal.toFixed(2)} ETB\n` +
+                `✅ **Status:** ${item.status}\n` +
+                `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n`;
+    });
+    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/instructions/, (msg) => {
+    const chatId = msg.chat.id;
+    const rulesCard = 
+`\`\`\`
+    B   I   N   G   O
++---+---+---+---+---+
+| ✅| ✅| ✅| ✅| ✅| <- መስመር
++---+---+---+---+---+
+|   |   |   |   |   |
++---+---+---+---+---+
+|   |   |   |   |   |
++---+---+---+---+---+
+    B   I   N   G   O
++---+---+---+---+---+
+| ✅|   |   |   | ✅|
++---+---+---+---+---| <- 4 ኮርነሮች
+|   |   |   |   |   |
++---+---+---+---+---+
+| ✅|   |   |   | ✅|
++---+---+---+---+---+
+\`\`\``;
+
+    const text = "ℹ️ **የጨዋታ ህጎች (Game Rules)**\n" +
+                 "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n" +
+                 "ጨዋታውን ለማሸነፍ ከተፈለገበት አንድ መስመር ወይም አራቱን ኮርነሮች ቀድሞ ማግኘት ያስፈልጋል።\n\n" +
+                 `${rulesCard}\n\n` +
+                 "💰 **ከአንድ በላይ አሸናፊ ካለ ደራሽ ገንዘቡ እኩል ይከፈላል።**";
+
+    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+});
+
+// ---------------- BUTTON HANDLERS ----------------
+
+bot.on('callback_query', (query) => {
+    const chatId = query.message.chat.id;
+    bot.answerCallbackQuery(query.id);
+
+    if (query.data === "dep_tele") {
+        const teleText = "📍 **የ TELE-Birr አካውንት**\n\n" +
+                         "Merchant ID / የሽያጭ መለያ: **11111 (Chernet Gobezie Nigat)**\n\n" +
+                         "**መመሪያ:**\n" +
+                         "1. ከላይ ባለው የ TELE-Birr አካውንት (Pay for Merchant) በሚለው ገንዘብ ያስገቡ።\n" +
+                         "2. ብሩን ስትልኩ የከፈላችሁበትን መረጃ የያዘ አጭር የጽሁፍ መልእክት (SMS) ይደርሳችኋል።\n" +
+                         "3. የደረሳችሁን SMS ሙሉውን Copy በማድረግ እዚህ Telegram ላይ Paste አድርገው ይላኩ።\n\n" +
+                         "የሚያጋጥማችሁ የክፍያ ችግር ካለ፦\n" +
+                         "@CherbingoSupport";
+        bot.sendMessage(chatId, teleText, { parse_mode: "Markdown" });
+    } else if (query.data === "dep_cbe") {
+        const cbeText = "📍 **የ CBE-Birr አካውንት**\n\n" +
+                        "CBE-BIRR Merchant: **00000 (Chernet Gobezie Nigat)**\n\n" +
+                        "**መመሪያ:**\n" +
+                        "1. ከላይ ባለው የ CBE-Birr አካውንት Pay for Merchant በሚለው ገንዘብ ያስገቡ።\n" +
+                        "2. ብሩን ስትልኩ የከፈላችሁበትን መረጃ የያዘ አጭር የጽሁፍ መልእክት (SMS) ይደርሳችኋል።\n" +
+                        "3. የደረሳችሁን SMS ሙሉውን Copy በማድረግ እዚህ Telegram ላይ Paste አድርገው ይላኩ።\n\n" +
+                        "የሚያጋጥማችሁ የክፍያ ችግር ካለ፦\n" +
+                        "@CherbingoSupport";
+        bot.sendMessage(chatId, cbeText, { parse_mode: "Markdown" });
+    }
+});
+
+// ---------------- SMS TEXT PASTE HANDLER ----------------
+
+bot.on('message', (msg) => {
+    if (msg.text && msg.text.startsWith('/')) return;
+
+    const chatId = msg.chat.id;
+    const text = msg.text || "";
+
+    if (text.toLowerCase().includes("telebirr") || text.toLowerCase().includes("cbe") || text.toLowerCase().includes("txn")) {
+        bot.sendMessage(
+            chatId,
+            "⏳ **የክፍያ መልእክትዎ ደርሶናል!**\nመረጃው እየተመረመረ ነው፤ በጥቂት ደቂቃዎች ውስጥ ሂሳብዎ ላይ ይደመራል።",
+            { parse_mode: "Markdown" }
+        );
+    }
+});
+
+// ---------------- API ENDPOINTS FOR FRONTEND ----------------
+
+app.get('/api/user/:id', (req, res) => {
+    const userId = req.params.id;
+    res.json(getUserData(userId));
+});
+
+app.listen(PORT, () => {
+    console.log(`🤖 Cherbingo Backend server running on port ${PORT}...`);
+});
