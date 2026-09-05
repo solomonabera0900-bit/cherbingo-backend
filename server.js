@@ -140,27 +140,15 @@ io.on('connection', (socket) => {
     });
 });
 
-// ... የካርቴላ እና የ Socket.io ኮዶችህ እዚህ አሉ ...
+app.get('/', (req, res) => {
+    res.send('Bingo Server is Running!');
+});
+
+// ... የ Socket.io እና የ Bingo ቁጥር መቆጣጠሪያ ኮዶችህ እዚህ መሃል ይኖራሉ ...
 
 const PORT = process.env.PORT || 3000;
 
-// 1. ሰርቨሩ ስራ ይጀምራል
+// 📍 2. server.listen ሁልጊዜ ከስር (መጨረሻ ላይ) ነው የሚሆነው
 server.listen(PORT, () => {
     console.log(`Bingo Server Port ${PORT} ላይ እየሰራ ነው...`);
-    
-    // ==========================================
-    // 2. Self-Ping ኮዱን እዚህ ውስጥ ወይም ከስሩ ማስገባት ትችላለህ
-    // ==========================================
-    const https = require('https');
-    
-    // የ Render ኦንላይን URL ህን እዚህ ተካው (ለምሳሌ፦ https://my-bingo-app.onrender.com)
-    const RENDER_URL = 'https://your-bingo-app.onrender.com';
-
-    setInterval(() => {
-        https.get(RENDER_URL, (res) => {
-            console.log('[Self-Ping] ሰርቨሩ እንዳይተኛ ነቅቷል!');
-        }).on('error', (err) => {
-            console.error('[Self-Ping Error]:', err.message);
-        });
-    }, 14 * 60 * 1000); // በየ 14 ደቂቃው (14 * 60 * 1000 milliseconds)
 });
