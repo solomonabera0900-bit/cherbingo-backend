@@ -1,154 +1,247 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const path = require('path');
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const cors = require("cors");
 
 const app = express();
+app.use(cors());
+
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
-// Serve static HTML file
-app.use(express.static(__dirname));
-
-app.get('/', (req, res) => {
-  res.send('Cherbingo Backend is running successfully!');
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
 });
 
-let soldCards = new Set();
-let players = new Set();
-let timeLeft = 30;
-let gameInProgress = false;
-let calledBalls = [];
-let gameInterval = null;
+// የጨዋታው አጠቃላይ ሁኔታዎች (State)
+let gameState = {
+  status: "WAITING", // WAITING, COUNTDOWN, PLAYING, FINISHED
+  soldCards: [], // የተሸጡ/የተመረጡ ካርቴላዎች
+  players: {}, // socket.id -> userId
+  cardsOwnership: {}, // cardNum -> userId
+  calledBalls: [], // የወጡ ኳሶች
+  timer: 30, // የመምረጫ ሰከንድ
+  timerInterval: null,
+  gameLoopInterval: null,
+};
 
-// 1-400 ለሚሆኑ ካርቴላዎች ማትሪክስ ማዘጋጀት
-const cardsDatabase = {};
-for (let i = 1; i <= 400; i++) {
-    cardsDatabase[i] = generateBingoCard();
+// 1. Standard 75-Ball Bingo Card ማመንጫ
+function generateBingoCard(cardNum) {
+  // የዘፈቀደ ቁጥሮችን በካርቴላ ቁጥሩ መነሻነት ለመስራት (Deterministic Seed implementation)
+  const getNumbers = (min, max, count) => {
+    let nums = [];
+    while (nums.length < count) {
+      let r = Math.floor(Math.random() * (max - min + 1)) + min;
+      if (!nums.includes(r)) nums.push(r);
+    }
+    return nums;
+  };
+
+  let b = getNumbers(1, 15, 5);
+  let i = getNumbers(16, 30, 5);
+  let n = getNumbers(31, 45, 5);
+  let g = getNumbers(46, 60, 5);
+  let o = getNumbers(61, 75, 5);
+
+  // Column-wise ወደ Row-wise (5x5 Grid) መቀየር
+  let cardMatrix = [];
+  for (let row = 0; row < 5; row++) {
+    cardMatrix.push(b[row]);
+    cardMatrix.push(i[row]);
+    if (row === 2) {
+      cardMatrix.push("★"); // ማዕከላዊ ነፃ ቦታ (FREE Space)
+    } else {
+      cardMatrix.push(n[row]);
+    }
+    cardMatrix.push(g[row]);
+    cardMatrix.push(o[row]);
+  }
+  return cardMatrix;
 }
 
-function generateBingoCard() {
-    let card = [];
-    let ranges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]];
-    let cols = [];
-    for (let c = 0; c < 5; c++) {
-        let col = [];
-        while (col.length < 5) {
-            let r = Math.floor(Math.random() * (ranges[c][1] - ranges[c][0] + 1)) + ranges[c][0];
-            if (!col.includes(r)) col.push(r);
-        }
-        cols.push(col);
+// 2. የጨዋታውን ቆጠራ እና ዙር ማስጀመር
+function startRoomTimer() {
+  if (gameState.timerInterval) clearInterval(gameState.timerInterval);
+
+  gameState.status = "WAITING";
+  gameState.timer = 30;
+
+  gameState.timerInterval = setInterval(() => {
+    gameState.timer--;
+
+    io.emit("roomState", {
+      soldCards: gameState.soldCards,
+      timeLeft: gameState.timer,
+      playersCount: Object.keys(gameState.players).length,
+    });
+
+    if (gameState.timer <= 0) {
+      clearInterval(gameState.timerInterval);
+      startCountdown();
     }
-    for (let r = 0; r < 5; r++) {
-        for (let c = 0; c < 5; c++) {
-            if (r === 2 && c === 2) card.push('★');
-            else card.push(cols[c][r]);
-        }
-    }
-    return card;
+  }, 1000);
 }
 
-// 30 ሰከንድ የሎቢ ቆጠራ
-setInterval(() => {
-    if (!gameInProgress) {
-        timeLeft--;
-        if (timeLeft <= 0) {
-            if (soldCards.size > 0) {
-                gameInProgress = true;
-                io.emit('startCountdown');
-                setTimeout(startLiveCaller, 4000);
-            } else {
-                timeLeft = 30;
-            }
-        }
-        io.emit('roomState', {
-            soldCards: Array.from(soldCards),
-            timeLeft: timeLeft,
-            playersCount: players.size
-        });
-    }
-}, 1000);
+function startCountdown() {
+  gameState.status = "COUNTDOWN";
+  io.emit("startCountdown");
 
-function startLiveCaller() {
-    calledBalls = [];
-    let availableNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
-
-    gameInterval = setInterval(() => {
-        if (availableNumbers.length > 0 && gameInProgress) {
-            let randomIndex = Math.floor(Math.random() * availableNumbers.length);
-            let num = availableNumbers.splice(randomIndex, 1)[0];
-            calledBalls.push(num);
-
-            let letter = "B";
-            if (num > 15 && num <= 30) letter = "I";
-            else if (num > 30 && num <= 45) letter = "N";
-            else if (num > 45 && num <= 60) letter = "G";
-            else if (num > 60) letter = "O";
-
-            io.emit('newBall', { num, letter, ballsCalled: calledBalls.length });
-        } else {
-            clearInterval(gameInterval);
-        }
-    }, 3000);
+  setTimeout(() => {
+    runGame();
+  }, 3000);
 }
 
-io.on('connection', (socket) => {
-    players.add(socket.id);
+// 3. ኳሶችን በየተወሰነ ሰከንዱ መጥራት
+function runGame() {
+  gameState.status = "PLAYING";
+  gameState.calledBalls = [];
 
-    socket.on('selectCard', ({ cardNum }) => {
-        soldCards.add(cardNum);
+  let pool = Array.from({ length: 75 }, (_, i) => i + 1);
+
+  gameState.gameLoopInterval = setInterval(() => {
+    if (pool.length === 0 || gameState.status !== "PLAYING") {
+      clearInterval(gameState.gameLoopInterval);
+      return;
+    }
+
+    const randomIndex = Math.floor(Math.random() * pool.length);
+    const ballNum = pool.splice(randomIndex, 1)[0];
+    gameState.calledBalls.push(ballNum);
+
+    let letter = "B";
+    if (ballNum > 15 && ballNum <= 30) letter = "I";
+    else if (ballNum > 30 && ballNum <= 45) letter = "N";
+    else if (ballNum > 45 && ballNum <= 60) letter = "G";
+    else if (ballNum > 60) letter = "O";
+
+    io.emit("newBall", {
+      num: ballNum,
+      letter: letter,
+      ballsCalled: gameState.calledBalls.length,
     });
+  }, 3500); // በየ 3.5 ሰከንዱ አዲስ ኳስ ይወጣል
+}
 
-    socket.on('deselectCard', ({ cardNum }) => {
-        soldCards.delete(cardNum);
+// 4. BINGO አሸናፊነትን ማረጋገጫ (Verification Logic)
+function verifyBingoWin(cardMatrix, calledBalls) {
+  // 5x5 Grid Index Map
+  const winningLines = [
+    // Rows
+    [0, 1, 2, 3, 4],
+    [5, 6, 7, 8, 9],
+    [10, 11, 12, 13, 14],
+    [15, 16, 17, 18, 19],
+    [20, 21, 22, 23, 24],
+    // Columns
+    [0, 5, 10, 15, 20],
+    [1, 6, 11, 16, 21],
+    [2, 7, 12, 17, 22],
+    [3, 8, 13, 18, 23],
+    [4, 9, 14, 19, 24],
+    // Diagonals
+    [0, 6, 12, 18, 24],
+    [4, 8, 12, 16, 20],
+  ];
+
+  return winningLines.some((line) => {
+    return line.every((idx) => {
+      let val = cardMatrix[idx];
+      return val === "★" || calledBalls.includes(val);
     });
+  });
+}
 
-    socket.on('getUserCards', ({ chosenCards }, callback) => {
-        let res = {};
-        chosenCards.forEach(c => { res[c] = cardsDatabase[c]; });
-        callback(res);
+// 5. Socket.io Events
+io.on("connection", (socket) => {
+  // ተጫዋች ሲቀላቀል የመጨረሻውን የክፍል ሁኔታ ይላክለታል
+  socket.emit("roomState", {
+    soldCards: gameState.soldCards,
+    timeLeft: gameState.timer,
+    playersCount: Object.keys(gameState.players).length,
+  });
+
+  // ካርቴላ ሲመረጥ
+  socket.on("selectCard", ({ cardNum, userId }) => {
+    if (!gameState.soldCards.includes(cardNum)) {
+      gameState.soldCards.push(cardNum);
+      gameState.cardsOwnership[cardNum] = userId;
+      gameState.players[socket.id] = userId;
+
+      io.emit("roomState", {
+        soldCards: gameState.soldCards,
+        timeLeft: gameState.timer,
+        playersCount: Object.keys(gameState.players).length,
+      });
+    }
+  });
+
+  // የተመረጠ ካርቴላ ሲሰረዝ
+  socket.on("deselectCard", ({ cardNum, userId }) => {
+    gameState.soldCards = gameState.soldCards.filter((c) => c !== cardNum);
+    delete gameState.cardsOwnership[cardNum];
+
+    io.emit("roomState", {
+      soldCards: gameState.soldCards,
+      timeLeft: gameState.timer,
+      playersCount: Object.keys(gameState.players).length,
     });
+  });
 
-    socket.on('claimBingo', ({ cardNo, userName }) => {
-        if (!gameInProgress) return;
-        clearInterval(gameInterval);
-        gameInProgress = false;
-
-        let prize = soldCards.size * 20;
-        let rawMatrix = cardsDatabase[cardNo];
-        let cardMatrix = rawMatrix.map(v => {
-            if (v === '★') return { v, status: 'star' };
-            if (calledBalls.includes(v)) return { v, status: 'green' };
-            return { v, status: 'normal' };
-        });
-
-        io.emit('gameWinner', {
-            userName,
-            cardNo,
-            prize,
-            cardMatrix
-        });
-
-        setTimeout(() => {
-            soldCards.clear();
-            timeLeft = 30;
-        }, 6000);
+  // ተጫዋቹ የመረጣቸውን ካርቴላዎች መረጃ ሲጠይቅ
+  socket.on("getUserCards", ({ chosenCards }, callback) => {
+    let response = {};
+    chosenCards.forEach((cardNo) => {
+      response[cardNo] = generateBingoCard(cardNo);
     });
+    callback(response);
+  });
 
-    socket.on('disconnect', () => {
-        players.delete(socket.id);
-    });
+  // ተጫዋች BINGO ሲል
+  socket.on("claimBingo", ({ cardNo, userId, userName }) => {
+    if (gameState.status !== "PLAYING") return;
+
+    let cardMatrix = generateBingoCard(cardNo);
+    let isWinner = verifyBingoWin(cardMatrix, gameState.calledBalls);
+
+    if (isWinner) {
+      gameState.status = "FINISHED";
+      clearInterval(gameState.gameLoopInterval);
+
+      let totalPrize = gameState.soldCards.length * 20;
+
+      // የማሸነፊያ ካርቴላውን ከኳሶች ጋር ማዛመድ (ለ UI ማሳያ)
+      let formattedMatrix = cardMatrix.map((val) => {
+        if (val === "★") return { v: "★", status: "star" };
+        if (gameState.calledBalls.includes(val)) return { v: val, status: "green" };
+        return { v: val, status: "normal" };
+      });
+
+      io.emit("gameWinner", {
+        userName: userName || "ተጫዋች",
+        cardNo: cardNo,
+        prize: totalPrize,
+        cardMatrix: formattedMatrix,
+      });
+
+      // ከ 5 ሰከንድ በኋላ አዲስ ዙር ማስጀመር
+      setTimeout(() => {
+        gameState.soldCards = [];
+        gameState.cardsOwnership = {};
+        startRoomTimer();
+      }, 5000);
+    }
+  });
+
+  socket.on("disconnect", () => {
+    delete gameState.players[socket.id];
+  });
 });
 
-app.get('/', (req, res) => {
-    res.send('Bingo Server is Running!');
-});
-
-// ... የ Socket.io እና የ Bingo ቁጥር መቆጣጠሪያ ኮዶችህ እዚህ መሃል ይኖራሉ ...
+// አፕሊኬሽኑ ሲነሳ የመጀመሪያውን ቆጠራ ይጀምራል
+startRoomTimer();
 
 const PORT = process.env.PORT || 3000;
-
-// 📍 2. server.listen ሁልጊዜ ከስር (መጨረሻ ላይ) ነው የሚሆነው
 server.listen(PORT, () => {
-    console.log(`Bingo Server Port ${PORT} ላይ እየሰራ ነው...`);
+  console.log(`Server is running on port ${PORT}`);
 });
