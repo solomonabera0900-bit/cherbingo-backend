@@ -1,173 +1,132 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
-
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
-});
+const io = new Server(server);
 
-let roomState = {
-    status: 'SELECTION', 
-    soldCards: {},
-    playersCount: 0,
-    selectionTimeLeft: 30
-};
+app.use(express.static('public'));
 
-let calledNumbers = [];
-let availableNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
+const sampleCards = [
+  [1,16,31,46,61, 2,17,32,47,62, 3,18,0,48,63, 4,19,34,49,64, 5,20,35,50,65],
+  [6,21,36,51,66, 7,22,37,52,67, 8,23,0,53,68, 9,24,39,54,69, 10,25,40,55,70],
+  [11,26,41,56,71, 12,27,42,57,72, 13,28,0,58,73, 14,29,44,59,74, 15,30,45,60,75]
+];
+
+let players = {};
+let drawnNumbers = [];
+let gameState = 'WAITING';
+let countdown = 30;
 let gameInterval = null;
-let selectionInterval = null;
-
-function generateBingoCard(cardNo) {
-    let card = [];
-    const ranges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]];
-    let cols = ranges.map(([min, max]) => {
-        let nums = new Set();
-        while (nums.size < 5) {
-            nums.add(Math.floor(Math.random() * (max - min + 1)) + min);
-        }
-        return Array.from(nums);
-    });
-
-    for (let row = 0; row < 5; row++) {
-        for (let col = 0; col < 5; col++) {
-            if (row === 2 && col === 2) {
-                card.push('★');
-            } else {
-                card.push(cols[col][row]);
-            }
-        }
-    }
-    return card;
-}
-
-function startSelectionPhase() {
-    roomState.status = 'SELECTION';
-    roomState.soldCards = {};
-    roomState.selectionTimeLeft = 30;
-    calledNumbers = [];
-    availableNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
-
-    io.emit('roomReset');
-
-    if (selectionInterval) clearInterval(selectionInterval);
-
-    selectionInterval = setInterval(() => {
-        roomState.selectionTimeLeft--;
-        
-        io.emit('roomState', {
-            soldCards: Object.keys(roomState.soldCards).map(Number),
-            timeLeft: roomState.selectionTimeLeft,
-            playersCount: io.engine.clientsCount,
-            status: roomState.status
-        });
-
-        if (roomState.selectionTimeLeft <= 0) {
-            clearInterval(selectionInterval);
-            startCountdown();
-        }
-    }, 1000);
-}
-
-function startCountdown() {
-    io.emit('startCountdown');
-    setTimeout(() => { startBingoGame(); }, 3000);
-}
-
-function startBingoGame() {
-    roomState.status = 'PLAYING';
-    io.emit('gameStarted');
-
-    if (gameInterval) clearInterval(gameInterval);
-
-    // 2. በየ 5 ሰከንዱ ቁጥር መጥራት
-    gameInterval = setInterval(() => {
-        if (availableNumbers.length === 0) {
-            // 1. ማንም ባይገባም 75ቱ ሲያልቁ ዳግም ማስጀመር
-            clearInterval(gameInterval);
-            setTimeout(() => { startSelectionPhase(); }, 3000);
-            return;
-        }
-
-        const randomIndex = Math.floor(Math.random() * availableNumbers.length);
-        const calledNum = availableNumbers.splice(randomIndex, 1)[0];
-        calledNumbers.push(calledNum);
-
-        let letter = '';
-        if (calledNum <= 15) letter = 'B';
-        else if (calledNum <= 30) letter = 'I';
-        else if (calledNum <= 45) letter = 'N';
-        else if (calledNum <= 60) letter = 'G';
-        else letter = 'O';
-
-        io.emit('newBall', {
-            num: calledNum,
-            letter: letter,
-            ballsCalled: calledNumbers.length
-        });
-
-    }, 5000);
-}
+let timerInterval = null;
 
 io.on('connection', (socket) => {
-    socket.emit('roomState', {
-        soldCards: Object.keys(roomState.soldCards).map(Number),
-        timeLeft: roomState.selectionTimeLeft,
-        playersCount: io.engine.clientsCount,
-        status: roomState.status
+  console.log('ተጫዋች ተቀላቀለ:', socket.id);
+
+  players[socket.id] = {
+    id: socket.id,
+    card: null,
+    marked: [12]
+  };
+
+  socket.emit('availableCards', sampleCards);
+  socket.emit('statusUpdate', { state: gameState, countdown });
+
+  socket.on('selectCard', (cardIndex) => {
+    if (gameState === 'WAITING' && sampleCards[cardIndex]) {
+      players[socket.id].card = sampleCards[cardIndex];
+      socket.emit('cardAssigned', sampleCards[cardIndex]);
+    }
+  });
+
+  socket.on('claimBingo', (markedIndices) => {
+    const player = players[socket.id];
+    if (!player || !player.card || gameState !== 'PLAYING') return;
+
+    const isValidNumbers = markedIndices.every(idx => {
+      if (idx === 12) return true;
+      return drawnNumbers.includes(player.card[idx]);
     });
 
-    socket.on('selectCard', ({ cardNum, userId }) => {
-        if (roomState.status === 'SELECTION' && !roomState.soldCards[cardNum]) {
-            roomState.soldCards[cardNum] = userId;
-            io.emit('cardSold', { cardNum, userId });
-        }
-    });
+    if (!isValidNumbers) {
+      socket.emit('bingoResult', { success: false, message: 'ያልወጡ ቁጥሮችን መርጠሃል!' });
+      return;
+    }
 
-    socket.on('deselectCard', ({ cardNum, userId }) => {
-        if (roomState.status === 'SELECTION' && roomState.soldCards[cardNum] === userId) {
-            delete roomState.soldCards[cardNum];
-            io.emit('cardFreed', { cardNum });
-        }
-    });
+    if (checkBingoRules(markedIndices)) {
+      io.emit('gameOver', { winner: socket.id });
+      resetGame();
+    } else {
+      socket.emit('bingoResult', { success: false, message: 'ትክክለኛ የBingo መስመር አልሰራህም!' });
+    }
+  });
 
-    socket.on('getUserCards', ({ chosenCards, userId }, callback) => {
-        let cardsData = {};
-        chosenCards.forEach(cardNo => {
-            cardsData[cardNo] = generateBingoCard(cardNo);
-        });
-        callback(cardsData);
-    });
-
-    socket.on('claimBingo', ({ cardNo, userId, userName }) => {
-        if (roomState.status === 'PLAYING') {
-            clearInterval(gameInterval);
-            const prize = Object.keys(roomState.soldCards).length * 20;
-            
-            io.emit('gameWinner', {
-                userName: userName || 'ተጫዋች',
-                cardNo: cardNo,
-                prize: prize,
-                cardMatrix: []
-            });
-
-            setTimeout(() => { startSelectionPhase(); }, 7000);
-        }
-    });
-
-    socket.on('disconnect', () => {
-        io.emit('playersUpdate', { count: io.engine.clientsCount });
-    });
+  socket.on('disconnect', () => {
+    delete players[socket.id];
+  });
 });
 
-startSelectionPhase();
+function checkBingoRules(marked) {
+  const set = new Set(marked);
+
+  for (let i = 0; i < 5; i++) {
+    let row = [i*5, i*5+1, i*5+2, i*5+3, i*5+4];
+    if (row.every(idx => set.has(idx))) return true;
+  }
+
+  for (let i = 0; i < 5; i++) {
+    let col = [i, i+5, i+10, i+15, i+20];
+    if (col.every(idx => set.has(idx))) return true;
+  }
+
+  let diag1 = [0, 6, 12, 18, 24];
+  let diag2 = [4, 8, 12, 16, 20];
+  if (diag1.every(idx => set.has(idx))) return true;
+  if (diag2.every(idx => set.has(idx))) return true;
+
+  let corners = [0, 4, 20, 24];
+  if (corners.every(idx => set.has(idx))) return true;
+
+  return false;
+}
+
+timerInterval = setInterval(() => {
+  if (gameState === 'WAITING') {
+    countdown--;
+    io.emit('statusUpdate', { state: gameState, countdown });
+
+    if (countdown <= 0) {
+      startGame();
+    }
+  }
+}, 1000);
+
+function startGame() {
+  gameState = 'PLAYING';
+  io.emit('statusUpdate', { state: gameState, countdown: 0 });
+
+  gameInterval = setInterval(() => {
+    if (drawnNumbers.length >= 75) {
+      resetGame();
+      return;
+    }
+    let rand;
+    do {
+      rand = Math.floor(Math.random() * 75) + 1;
+    } while (drawnNumbers.includes(rand));
+
+    drawnNumbers.push(rand);
+    io.emit('newNumber', rand);
+  }, 5000);
+}
+
+function resetGame() {
+  clearInterval(gameInterval);
+  gameState = 'WAITING';
+  countdown = 30;
+  drawnNumbers = [];
+}
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`CherBingo Server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
