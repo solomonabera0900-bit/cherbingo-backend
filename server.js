@@ -16,9 +16,9 @@ const io = new Server(server, {
     }
 });
 
-// --- 2. TELEGRAM BOT SETUP (የተስተካከለ) ---
+// --- 2. TELEGRAM BOT SETUP ---
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
-const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app"; // ትክክለኛው የ Vercel ሊንክህ
+const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app"; // የ Vercel ሊንክህ
 
 const bot = new Telegraf(BOT_TOKEN);
 const userStates = {};
@@ -36,7 +36,7 @@ bot.start((ctx) => {
     );
 });
 
-// Bot /play - እያንዳንዱ የክፍል ቁልፍ ሲጫን WebApp ይከፍታል
+// Bot /play
 bot.command('play', (ctx) => {
     ctx.reply(
         "🕹 PLAY IN:\nChoose a room to join the game:",
@@ -108,7 +108,6 @@ bot.command('instructions', (ctx) => {
     ctx.replyWithMarkdown(instructionsText);
 });
 
-// Bot /history & /register
 bot.command('history', (ctx) => ctx.reply("📜 እስካሁን ምንም የግብይት ታሪክ የሎትም።"));
 bot.command('register', (ctx) => ctx.reply("✅ ምዝገባዎ ቀደም ሲል ተጠናቋል!"));
 
@@ -141,7 +140,6 @@ bot.launch().then(() => {
 }).catch((err) => {
     console.error("Bot launch error:", err);
 });
-
 
 // --- 3. BINGO GAME LOGIC & SOCKET.IO ---
 const bingoCardsDatabase = {};
@@ -178,7 +176,7 @@ generateBingoCards();
 let roomState = {
     status: 'WAITING',
     soldCards: [],
-    players: {},
+    players: {}, // socketId: { userId, cards: [num1, num2] }
     timeLeft: 30,
     calledNumbers: [],
     availableNumbers: Array.from({ length: 75 }, (_, i) => i + 1),
@@ -255,7 +253,7 @@ function startLiveGame() {
             ballsCalled: roomState.calledNumbers.length
         });
 
-    }, 5000);
+    }, 4000);
 }
 
 function checkBingoWinner(cardArray, calledNumbers) {
@@ -281,7 +279,6 @@ function checkBingoWinner(cardArray, calledNumbers) {
 
 io.on('connection', (socket) => {
 
-    // አዲስ ለገባ ተጫዋች አሁናዊ መረጃ መላክ
     socket.emit('roomState', {
         soldCards: roomState.soldCards,
         timeLeft: roomState.timeLeft,
@@ -298,91 +295,110 @@ io.on('connection', (socket) => {
     socket.on('selectCard', ({ cardNum, userId }) => {
         if (!roomState.soldCards.includes(cardNum)) {
             roomState.soldCards.push(cardNum);
-            roomState.players[socket.id] = { userId, cardNum };
+            
+            if (!roomState.players[socket.id]) {
+                roomState.players[socket.id] = { userId, cards: [] };
+            }
+            if (!roomState.players[socket.id].cards.includes(cardNum)) {
+                roomState.players[socket.id].cards.push(cardNum);
+            }
 
-            // ለሁሉም ሰዎች በአንድ ጊዜ እጅግ በፍጥነት ይላካል (io.volatile ወይም io.emit)
             io.emit('cardUpdated', {
                 soldCards: roomState.soldCards,
                 action: 'selected',
                 cardNum: cardNum
             });
+            
+            io.emit('roomState', {
+                soldCards: roomState.soldCards,
+                timeLeft: roomState.timeLeft,
+                playersCount: Object.keys(roomState.players).length,
+                status: roomState.status,
+                calledNumbers: roomState.calledNumbers
+            });
         }
     });
 
-    // 2. ካርቴላ ሲተው/ሲሰረዝ (Deselect Card) - በፍጥነት ነፃ ያደርጋል
+    // 2. ካርቴላ ሲተው/ሲሰረዝ (Deselect Card)
     socket.on('deselectCard', ({ cardNum, userId }) => {
         roomState.soldCards = roomState.soldCards.filter(c => c !== cardNum);
-        delete roomState.players[socket.id];
+        
+        if (roomState.players[socket.id]) {
+            roomState.players[socket.id].cards = roomState.players[socket.id].cards.filter(c => c !== cardNum);
+            if (roomState.players[socket.id].cards.length === 0) {
+                delete roomState.players[socket.id];
+            }
+        }
 
-        // ለሁሉም ሰዎች በአንድ ጊዜ እጅግ በፍጥነት ይላካል
         io.emit('cardUpdated', {
             soldCards: roomState.soldCards,
             action: 'deselected',
             cardNum: cardNum
         });
+
+        io.emit('roomState', {
+            soldCards: roomState.soldCards,
+            timeLeft: roomState.timeLeft,
+            playersCount: Object.keys(roomState.players).length,
+            status: roomState.status,
+            calledNumbers: roomState.calledNumbers
+        });
     });
 
-    // 3. ተጫዋች ሲወጣ ወይም አፑን ሲዘጋው
-    socket.on('disconnect', () => {
-        if (roomState.players[socket.id]) {
-            const userCard = roomState.players[socket.id].cardNum;
-            
-            if (roomState.status === 'WAITING' && userCard) {
-                roomState.soldCards = roomState.soldCards.filter(c => c !== userCard);
-                delete roomState.players[socket.id];
-
-                io.emit('cardUpdated', {
-                    soldCards: roomState.soldCards,
-                    action: 'deselected',
-                    cardNum: userCard
-                });
-            }
-        }
-    });
-
-    // ሌሎቹ Socket Event-ዎች (getUserCards, claimBingo...) እንዳሉ ይቆያሉ
+    // 3. የተመረጡ ካርቴላዎች መረጃ
     socket.on('getUserCards', ({ chosenCards, userId }, callback) => {
         let userCards = {};
-        chosenCards.forEach(cardNo => {
-            if (bingoCardsDatabase[cardNo]) {
-                userCards[cardNo] = bingoCardsDatabase[cardNo];
-            }
-        });
+        if (chosenCards && Array.isArray(chosenCards)) {
+            chosenCards.forEach(cardNo => {
+                if (bingoCardsDatabase[cardNo]) {
+                    userCards[cardNo] = bingoCardsDatabase[cardNo];
+                }
+            });
+        }
         callback(userCards);
     });
 
+    // 4. Bingo Claim
     socket.on('claimBingo', ({ cardNo, userId, userName }) => {
+        if (roomState.status !== 'PLAYING') return;
+
         const cardArray = bingoCardsDatabase[cardNo];
 
         if (cardArray && checkBingoWinner(cardArray, roomState.calledNumbers)) {
+            roomState.status = 'FINISHED';
             clearInterval(roomState.gameInterval);
+            
             const totalPrize = roomState.soldCards.length * 20;
 
             io.emit('gameWinner', {
                 userId,
                 userName,
                 cardNo,
-                prize: totalPrize
+                prize: totalPrize,
+                cardMatrix: cardArray
             });
 
             setTimeout(() => {
                 resetRoom();
-            }, 5000);
+            }, 6000);
         }
     });
-});
 
-    // 3. ተጫዋቹ ጨዋታው ሳይጀምር ከወጣ (Disconnect/Closed WebApp) ካርቴላውን ነፃ ማድረግ
+    // 5. ተጫዋች ሲወጣ (Disconnect)
     socket.on('disconnect', () => {
         if (roomState.players[socket.id]) {
-            const userCard = roomState.players[socket.id].cardNum;
+            const userCards = roomState.players[socket.id].cards || [];
             
-            // ጨዋታው በይጠባበቅ ላይ (WAITING) ከሆነ ብቻ ካርቴላውን ነፃ አድርገው
-            if (roomState.status === 'WAITING' && userCard) {
-                roomState.soldCards = roomState.soldCards.filter(c => c !== userCard);
+            if (roomState.status === 'WAITING' && userCards.length > 0) {
+                roomState.soldCards = roomState.soldCards.filter(c => !userCards.includes(c));
                 delete roomState.players[socket.id];
 
-                // ለሌሎች ተጫዋቾች የተለቀቀውን ካርቴላ ማሳወቅ
+                io.emit('cardUpdated', {
+                    soldCards: roomState.soldCards,
+                    action: 'deselected',
+                    cardNum: null
+                });
+
                 io.emit('roomState', {
                     soldCards: roomState.soldCards,
                     timeLeft: roomState.timeLeft,
@@ -396,8 +412,8 @@ io.on('connection', (socket) => {
 });
 
 function resetRoom() {
-    clearInterval(roomState.gameInterval);
-    clearInterval(roomState.timerInterval);
+    if (roomState.gameInterval) clearInterval(roomState.gameInterval);
+    if (roomState.timerInterval) clearInterval(roomState.timerInterval);
 
     roomState = {
         status: 'WAITING',
