@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const { Telegraf, Markup } = require('telegraf');
 
+// --- 1. EXPRESS & SOCKET.IO SETUP ---
 const app = express();
 app.use(cors());
 
@@ -14,7 +16,134 @@ const io = new Server(server, {
     }
 });
 
-// --- 1. የ 400 ካርቴላዎች መረጃ ማመንጫ (Card Data Generator) ---
+// --- 2. TELEGRAM BOT SETUP ---
+const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
+const WEB_APP_URL = "https://chernetbingo-frontend.vercel.app";
+
+const bot = new Telegraf(BOT_TOKEN);
+const userStates = {};
+
+// Bot /start
+bot.start((ctx) => {
+    const firstName = ctx.from.first_name || "ተጫዋች";
+    ctx.reply(
+        `እንኳን ወደ Chernet Bingo በደህና መጡ ${firstName}! 🎯\n\n` +
+        `ታች ያለውን ቁልፍ በመጫን ጨዋታውን መጀመር ይችላሉ፦\n` +
+        `ወይም ሌሎችን አማራጮች ለማየት /play, /balance, /instructions ይጠቀሙ።`,
+        Markup.inlineKeyboard([
+            [Markup.button.webApp("🎮 ጨዋታውን ጀምር (Play Bingo)", WEB_APP_URL)]
+        ])
+    );
+});
+
+// Bot /play
+bot.command('play', (ctx) => {
+    ctx.reply(
+        "🕹 PLAY IN:\nChoose a room to join the game:",
+        Markup.inlineKeyboard([
+            [Markup.button.callback("🎮 PLAY | 10 ብር", "room_10")],
+            [Markup.button.callback("SuperBingo | 50 ብር", "room_50")],
+            [Markup.button.callback("⚽️ GoodBingo Bonus", "room_bonus")]
+        ])
+    );
+});
+
+// Bot /balance
+bot.command('balance', (ctx) => {
+    const userBalance = "50.00";
+    ctx.reply(`💰 ቀሪ ሂሳብ (Available): ${userBalance} ETB`);
+});
+
+// Bot /deposit
+bot.command('deposit', (ctx) => {
+    const depositText = 
+        `የ TELE-Birr አካውንት\n\n` +
+        `( Merchant ID )\n` +
+        `      ወይም -  715516 (Betelihem)\n` +
+        `( የሽያጭ መለያ )\n\n` +
+        `መመሪያ\n\n` +
+        `1. በላይ ባለው የ TELE-Birr አካውንት ( ለግብይት ለመክፈል ) ወይም ( Pay for Merchant ) በሚለው አማራጭ ገንዘቡን ያስገቡ\n` +
+        `2. ብሩን ስትልኩ የከፈላችሁበትን መረጃ የያዘ አጭር የጽሁፍ መልእክት(sms) ከ TELE-Birr ይደርሳችኋል\n` +
+        `3. የደረሳችሁን አጭር የጽሁፍ መልእክት(sms) ሙሉውን ኮፒ(copy) በማድረግ ከታች ባለው የቴሌግራም የጽሁፍ ማበያወ ላይ ፔስት(paste) በማድረግ ይላኩት\n\n` +
+        `የሚያጋጥማችሁ የክፍያ ችግር ካለ\n` +
+        `@GoodBingoSupport በዚህ ስፖርት ማወራት ይችላሉ`;
+    ctx.reply(depositText);
+});
+
+// Bot /withdraw
+bot.command('withdraw', (ctx) => {
+    userStates[ctx.from.id] = 'awaiting_withdraw';
+    ctx.reply(
+        "📩 *ገንዘብ ያውጡ (Withdraw Funds)*\n" +
+        "እባክዎ የሚያወጡትን የገንዘብ መጠን ያስገቡ (Enter amount to withdraw):",
+        { parse_mode: 'Markdown' }
+    );
+});
+
+// Bot /instructions
+bot.command('instructions', (ctx) => {
+    const instructionsText = 
+        `ℹ️ **የጨዋታ ህጎች (Game Rules)**\n` +
+        `────────────────────\n` +
+        `ጨዋታውን ለማሸነፍ በተፈለገበት አንድ መስመር ወይም አራቱን ኮርነሮች ቀድሞ ማግኘት\n\n` +
+        `\`\`\`\n` +
+        `  B  I  N  G  O\n` +
+        `+--+--+--+--+--+\n` +
+        `|✅|✅|✅|✅|✅| <- መስመር\n` +
+        `+--+--+--+--+--+\n` +
+        `|  |  |  |  |  |\n` +
+        `+--+--+--+--+--+\n` +
+        `|  |  |  |  |  |\n` +
+        `+--+--+--+--+--+\n` +
+        `  B  I  N  G  O\n` +
+        `+--+--+--+--+--+\n` +
+        `|✅|  |  |  |✅| <- 4 ኮርነሮች\n` +
+        `+--+--+--+--+--+\n` +
+        `|  |  |  |  |  |\n` +
+        `+--+--+--+--+--+\n` +
+        `|✅|  |  |  |✅|\n` +
+        `+--+--+--+--+--+\n` +
+        `\`\`\`\n\n` +
+        `💰 ከአንድ በላይ አሸናፊ ካለ ደራሽ ገንዘቡን ይከፋፈላሉ`;
+    ctx.replyWithMarkdown(instructionsText);
+});
+
+// Bot /history & /register
+bot.command('history', (ctx) => ctx.reply("📜 እስካሁን ምንም የግብይት ታሪክ የሎትም።"));
+bot.command('register', (ctx) => ctx.reply("✅ ምዝገባዎ ቀደም ሲል ተጠናቋል!"));
+
+// Bot Message listener
+bot.on('text', (ctx) => {
+    const userId = ctx.from.id;
+    const text = ctx.message.text;
+
+    if (userStates[userId] === 'awaiting_withdraw') {
+        const amount = parseInt(text);
+        if (isNaN(amount)) {
+            return ctx.reply("እባክዎን ቁጥር ብቻ ያስገቡ።");
+        }
+        if (amount < 100) {
+            return ctx.reply("❌ ዝቅተኛው የማውጫ መጠን 100 ብር ነው። (Min withdraw 100 ETB).");
+        }
+        const currentBalance = 50.0;
+        if (amount > currentBalance) {
+            delete userStates[userId];
+            return ctx.reply("❌ በቂ ሂሳብ የሎትም (Insufficient balance).");
+        }
+        delete userStates[userId];
+        return ctx.reply(`✅ የ ${amount} ETB ወጪ ጥያቄዎ ተቀብለናል።`);
+    }
+});
+
+// ቦቱን ማስነሳት
+bot.launch().then(() => {
+    console.log("Telegram Bot started successfully!");
+}).catch((err) => {
+    console.error("Bot launch error:", err);
+});
+
+
+// --- 3. BINGO GAME LOGIC & SOCKET.IO ---
 const bingoCardsDatabase = {};
 
 function generateBingoCards() {
@@ -35,7 +164,7 @@ function generateBingoCards() {
         for (let row = 0; row < 5; row++) {
             for (let col = 0; col < 5; col++) {
                 if (row === 2 && col === 2) {
-                    card.push('★'); // Free Space
+                    card.push('★');
                 } else {
                     card.push(columns[col][row]);
                 }
@@ -46,9 +175,8 @@ function generateBingoCards() {
 }
 generateBingoCards();
 
-// --- 2. የጨዋታው ሁኔታ (Game State Management) ---
 let roomState = {
-    status: 'WAITING', // WAITING, COUNTDOWN, PLAYING
+    status: 'WAITING',
     soldCards: [],
     players: {},
     timeLeft: 30,
@@ -66,7 +194,6 @@ function getBallLetter(num) {
     return 'O';
 }
 
-// የሎቢ ሰዓት ቆጣሪ (Lobby Timer)
 function startLobbyTimer() {
     if (roomState.timerInterval) return;
 
@@ -95,7 +222,6 @@ function startLobbyTimer() {
     }, 1000);
 }
 
-// የካውንትዳውን ምዕራፍ (3-2-1 Countdown)
 function startCountdownPhase() {
     roomState.status = 'COUNTDOWN';
     io.emit('startCountdown');
@@ -105,7 +231,6 @@ function startCountdownPhase() {
     }, 3000);
 }
 
-// --- 3. ጨዋታውን ማስጀመር እና በየ 5 ሰከንዱ ቁጥር መጥራት ---
 function startLiveGame() {
     roomState.status = 'PLAYING';
     io.emit('gameStarted');
@@ -130,10 +255,9 @@ function startLiveGame() {
             ballsCalled: roomState.calledNumbers.length
         });
 
-    }, 5000); // በየ 5 ሰከንዱ
+    }, 5000);
 }
 
-// --- 4. የቢንጎ ህግ ማረጋገጫ (Bingo Logic Validation) ---
 function checkBingoWinner(cardArray, calledNumbers) {
     const calledSet = new Set(calledNumbers);
     calledSet.add('★');
@@ -142,15 +266,11 @@ function checkBingoWinner(cardArray, calledNumbers) {
 
     for (let i = 0; i < 5; i++) {
         let rowStart = i * 5;
-        if ([0, 1, 2, 3, 4].every(col => isMarked(rowStart + col))) {
-            return true;
-        }
+        if ([0, 1, 2, 3, 4].every(col => isMarked(rowStart + col))) return true;
     }
 
     for (let col = 0; col < 5; col++) {
-        if ([0, 1, 2, 3, 4].every(row => isMarked(row * 5 + col))) {
-            return true;
-        }
+        if ([0, 1, 2, 3, 4].every(row => isMarked(row * 5 + col))) return true;
     }
 
     if ([0, 6, 12, 18, 24].every(index => isMarked(index))) return true;
@@ -159,10 +279,7 @@ function checkBingoWinner(cardArray, calledNumbers) {
     return false;
 }
 
-// --- 5. የ Socket.io ክስተቶች (Socket Connection Handlers) ---
 io.on('connection', (socket) => {
-
-    // አዲስ ለገባ ተጫዋች አሁን ያለውን የክፍል ሁኔታና የወጡ ቁጥሮች ማድረስ (Spectator Mode Support)
     socket.emit('roomState', {
         soldCards: roomState.soldCards,
         timeLeft: roomState.timeLeft,
@@ -233,7 +350,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        // Disconnect handling logic
+        // Disconnect logic
     });
 });
 
@@ -256,7 +373,11 @@ function resetRoom() {
     startLobbyTimer();
 }
 
-const PORT = process.env.PORT || 3000;
+// --- 4. SERVER LISTEN ---
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-    console.log(`CherBingo Backend running on port ${PORT}`);
+    console.log(`CherBingo Backend & Bot running on port ${PORT}`);
 });
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
