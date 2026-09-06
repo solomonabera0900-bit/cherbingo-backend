@@ -23,20 +23,17 @@ const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app";
 const bot = new Telegraf(BOT_TOKEN);
 const userStates = {};
 
-// Bot /start
 bot.start((ctx) => {
     const firstName = ctx.from.first_name || "ተጫዋች";
     ctx.reply(
         `እንኳን ወደ Chernet Bingo በደህና መጡ ${firstName}! 🎯\n\n` +
-        `ታች ያለውን ቁልፍ በመጫን ጨዋታውን መጀመር ይችላሉ፦\n` +
-        `ወይም ሌሎችን አማራጮች ለማየት /play, /balance, /instructions ይጠቀሙ።`,
+        `ታች ያለውን ቁልፍ በመጫን ጨዋታውን መጀመር ይችላሉ፦`,
         Markup.inlineKeyboard([
             [Markup.button.webApp("🎮 ጨዋታውን ጀምር (Play Bingo)", WEB_APP_URL)]
         ])
     );
 });
 
-// Bot /play
 bot.command('play', (ctx) => {
     ctx.reply(
         "🕹 PLAY IN:\nChoose a room to join the game:",
@@ -48,108 +45,51 @@ bot.command('play', (ctx) => {
     );
 });
 
-// Bot /balance
 bot.command('balance', (ctx) => {
-    const userBalance = "50.00";
-    ctx.reply(`💰 ቀሪ ሂሳብ (Available): ${userBalance} ETB`);
+    ctx.reply(`💰 ቀሪ ሂሳብ (Available): 50.00 ETB`);
 });
 
-// Bot /deposit
 bot.command('deposit', (ctx) => {
-    const depositText = 
-        `የ TELE-Birr አካውንት\n\n` +
-        `( Merchant ID )\n` +
-        `      ወይም -  715516 (Betelihem)\n` +
-        `( የሽያጭ መለያ )\n\n` +
-        `መመሪያ\n\n` +
-        `1. በላይ ባለው የ TELE-Birr አካውንት ( ለግብይት ለመክፈል ) ወይም ( Pay for Merchant ) በሚለው አማራጭ ገንዘቡን ያስገቡ\n` +
-        `2. ብሩን ስትልኩ የከፈላችሁበትን መረጃ የያዘ አጭር የጽሁፍ መልእክት(sms) ከ TELE-Birr ይደርሳችኋል\n` +
-        `3. የደረሳችሁን አጭር የጽሁፍ መልእክት(sms) ሙሉውን ኮፒ(copy) በማድረግ ከታች ባለው የቴሌግራም የጽሁፍ ማበያወ ላይ ፔስት(paste) በማድረግ ይላኩት\n\n` +
-        `የሚያጋጥማችሁ የክፍያ ችግር ካለ\n` +
-        `@GoodBingoSupport በዚህ ስፖርት ማወራት ይችላሉ`;
-    ctx.reply(depositText);
-});
-
-// Bot /withdraw
-bot.command('withdraw', (ctx) => {
-    userStates[ctx.from.id] = 'awaiting_withdraw';
     ctx.reply(
-        "📩 *ገንዘብ ያውጡ (Withdraw Funds)*\n" +
-        "እባክዎ የሚያወጡትን የገንዘብ መጠን ያስገቡ (Enter amount to withdraw):",
-        { parse_mode: 'Markdown' }
+        `የ TELE-Birr አካውንት\n\n` +
+        `( Merchant ID ) - 715516 (Betelihem)\n\n` +
+        `1. በላይ ባለው የ TELE-Birr አካውንት ክፍያ ይፈጽሙ\n` +
+        `2. የደረሰዎትን SMS ሙሉውን ኮፒ በማድረግ እዚህ ፔስት ያድርጉ።`
     );
 });
 
-// Bot /instructions
-bot.command('instructions', (ctx) => {
-    const instructionsText = 
-        `ℹ️ **የጨዋታ ህጎች (Game Rules)**\n` +
-        `────────────────────\n` +
-        `ጨዋታውን ለማሸነፍ በተፈለገበት አንድ መስመር ወይም አራቱን ኮርነሮች ቀድሞ ማግኘት\n\n` +
-        `\`\`\`\n` +
-        `  B  I  N  G  O\n` +
-        `+--+--+--+--+--+\n` +
-        `|✅|✅|✅|✅|✅| <- መስመር\n` +
-        `+--+--+--+--+--+\n` +
-        `|  |  |  |  |  |\n` +
-        `+--+--+--+--+--+\n` +
-        `|  |  |  |  |  |\n` +
-        `+--+--+--+--+--+\n` +
-        `  B  I  N  G  O\n` +
-        `+--+--+--+--+--+\n` +
-        `|✅|  |  |  |✅| <- 4 ኮርነሮች\n` +
-        `+--+--+--+--+--+\n` +
-        `|  |  |  |  |  |\n` +
-        `+--+--+--+--+--+\n` +
-        `|✅|  |  |  |✅|\n` +
-        `+--+--+--+--+--+\n` +
-        `\`\`\`\n\n` +
-        `💰 ከአንድ በላይ አሸናፊ ካለ ደራሽ ገንዘቡን ይከፋፈላሉ`;
-    ctx.replyWithMarkdown(instructionsText);
+bot.command('withdraw', (ctx) => {
+    userStates[ctx.from.id] = 'awaiting_withdraw';
+    ctx.reply("📩 እባክዎ የሚያወጡትን የገንዘብ መጠን ያስገቡ፦");
 });
 
-bot.command('history', (ctx) => ctx.reply("📜 እስካሁን ምንም የግብይት ታሪክ የሎትም።"));
-bot.command('register', (ctx) => ctx.reply("✅ ምዝገባዎ ቀደም ሲል ተጠናቋል!"));
+bot.command('instructions', (ctx) => {
+    ctx.reply("ℹ️ **የጨዋታ ህጎች**\nአንድ መስመር ወይም አራት ኮርነሮችን ቀድሞ የሞላ ያሸንፋል!");
+});
 
-// Bot Message listener
 bot.on('text', (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
 
     if (userStates[userId] === 'awaiting_withdraw') {
         const amount = parseInt(text);
-        if (isNaN(amount)) {
-            return ctx.reply("እባክዎን ቁጥር ብቻ ያስገቡ።");
-        }
-        if (amount < 100) {
-            return ctx.reply("❌ ዝቅተኛው የማውጫ መጠን 100 ብር ነው። (Min withdraw 100 ETB).");
-        }
-        const currentBalance = 50.0;
-        if (amount > currentBalance) {
-            delete userStates[userId];
-            return ctx.reply("❌ በቂ ሂሳብ የሎትም (Insufficient balance).");
+        if (isNaN(amount) || amount < 100) {
+            return ctx.reply("❌ ዝቅተኛው የማውጫ መጠን 100 ብር ነው።");
         }
         delete userStates[userId];
         return ctx.reply(`✅ የ ${amount} ETB ወጪ ጥያቄዎ ተቀብለናል።`);
     }
 });
 
-// ቦቱን ማስነሳት
-bot.launch().then(() => {
-    console.log("Telegram Bot started successfully!");
-}).catch((err) => {
-    console.error("Bot launch error:", err);
-});
+bot.launch().catch((err) => console.error("Bot launch error:", err));
 
-// --- 3. BINGO GAME LOGIC & SOCKET.IO ---
+// --- 3. BINGO GAME LOGIC & DATABASE ---
 const bingoCardsDatabase = {};
 
 function generateBingoCards() {
     for (let cardNo = 1; cardNo <= 400; cardNo++) {
         let card = [];
-        const ranges = [
-            [1, 15], [16, 30], [31, 45], [46, 60], [61, 75]
-        ];
+        const ranges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]];
 
         let columns = ranges.map(([min, max]) => {
             let nums = new Set();
@@ -173,10 +113,11 @@ function generateBingoCards() {
 }
 generateBingoCards();
 
+// የጨዋታው ሁኔታ (State)
 let roomState = {
     status: 'WAITING',
-    soldCards: [],
-    players: {}, // socketId: { userId, cards: [num1, num2] }
+    cardOwners: {}, // { cardNum(Number): socketId }  <- ለባለቤትነት ዋስትና የሚሰጠው ዋናው ቦታ
+    players: {},    // socketId: { userId, userName, cards: [] }
     timeLeft: 30,
     calledNumbers: [],
     availableNumbers: Array.from({ length: 75 }, (_, i) => i + 1),
@@ -192,25 +133,29 @@ function getBallLetter(num) {
     return 'O';
 }
 
+function broadcastRoomState() {
+    const soldCardsList = Object.keys(roomState.cardOwners).map(Number);
+    io.emit('roomState', {
+        soldCards: soldCardsList,
+        timeLeft: roomState.timeLeft,
+        playersCount: Object.keys(roomState.players).length,
+        status: roomState.status,
+        calledNumbers: roomState.calledNumbers
+    });
+}
+
 function startLobbyTimer() {
     if (roomState.timerInterval) return;
 
     roomState.timerInterval = setInterval(() => {
         roomState.timeLeft--;
-        
-        io.emit('roomState', {
-            soldCards: roomState.soldCards,
-            timeLeft: roomState.timeLeft,
-            playersCount: Object.keys(roomState.players).length,
-            status: roomState.status,
-            calledNumbers: roomState.calledNumbers
-        });
+        broadcastRoomState();
 
         if (roomState.timeLeft <= 0) {
             clearInterval(roomState.timerInterval);
             roomState.timerInterval = null;
 
-            if (roomState.soldCards.length > 0) {
+            if (Object.keys(roomState.cardOwners).length > 0) {
                 startCountdownPhase();
             } else {
                 roomState.timeLeft = 30;
@@ -277,10 +222,12 @@ function checkBingoWinner(cardArray, calledNumbers) {
     return false;
 }
 
+// --- 4. SOCKET.IO EVENTS ---
 io.on('connection', (socket) => {
 
+    // መጀመሪያ ሲገናኝ ያለውን ሁኔታ መላክ
     socket.emit('roomState', {
-        soldCards: roomState.soldCards,
+        soldCards: Object.keys(roomState.cardOwners).map(Number),
         timeLeft: roomState.timeLeft,
         playersCount: Object.keys(roomState.players).length,
         status: roomState.status,
@@ -291,76 +238,63 @@ io.on('connection', (socket) => {
         startLobbyTimer();
     }
 
-    // 1. ካርቴላ ሲመረጥ (Select Card with Race Condition Prevention)
-    socket.on('selectCard', ({ cardNum, userId }) => {
-        if (roomState.status !== 'WAITING') return;
-
+    // 1. ካርቴላ መምረጥ (Strict Selection with Collision Check)
+    socket.on('selectCard', ({ cardNum, userId, userName }) => {
         const targetCard = Number(cardNum);
 
-        if (!roomState.soldCards.includes(targetCard)) {
-            roomState.soldCards.push(targetCard);
+        // ጨዋታው ከተጀመረ አይቻልም
+        if (roomState.status !== 'WAITING') {
+            return socket.emit('cardSelectFailed', { cardNum: targetCard, message: "ጨዋታው ተጀምሯል!" });
+        }
 
-            if (!roomState.players[socket.id]) {
-                roomState.players[socket.id] = { userId, cards: [] };
-            }
-            if (!roomState.players[socket.id].cards.includes(targetCard)) {
-                roomState.players[socket.id].cards.push(targetCard);
-            }
-
-            io.emit('cardUpdated', {
-                soldCards: roomState.soldCards,
-                action: 'selected',
+        // ካርቴላው በሌላ ሰው ከተያዘ ወዲያውኑ Reject ማድረግ
+        if (roomState.cardOwners[targetCard] && roomState.cardOwners[targetCard] !== socket.id) {
+            return socket.emit('cardSelectFailed', {
                 cardNum: targetCard,
-                selectedBy: userId
+                message: "ይህ ካርቴላ በሌላ ተጫዋች ቀድሞ ተይዟል!"
             });
+        }
 
-            io.emit('roomState', {
-                soldCards: roomState.soldCards,
-                timeLeft: roomState.timeLeft,
-                playersCount: Object.keys(roomState.players).length,
-                status: roomState.status,
-                calledNumbers: roomState.calledNumbers
-            });
-        } else {
-            socket.emit('cardSelectFailed', {
-                cardNum: targetCard,
-                message: "ይህ ካርቴላ ቀድሞ በሌላ ተጫዋች ተይዟል!"
-            });
+        // ለዚህ Socket ካርቴላውን መመደብ
+        roomState.cardOwners[targetCard] = socket.id;
+
+        if (!roomState.players[socket.id]) {
+            roomState.players[socket.id] = { userId, userName, cards: [] };
+        }
+
+        if (!roomState.players[socket.id].cards.includes(targetCard)) {
+            roomState.players[socket.id].cards.push(targetCard);
+        }
+
+        // ለላከው ሰው ስኬታማ መሆኑን ማሳወቅ
+        socket.emit('cardSelectSuccess', { cardNum: targetCard });
+
+        // ለሁሉም ተጫዋቾች የተወሰደውን ካርቴላ ማሳወቅ
+        broadcastRoomState();
+    });
+
+    // 2. ካርቴላን መሰረዝ/መልሶ መልቀቅ
+    socket.on('deselectCard', ({ cardNum }) => {
+        const targetCard = Number(cardNum);
+
+        // የራሱ ከሆነ ብቻ ነው መሰረዝ የሚችለው
+        if (roomState.cardOwners[targetCard] === socket.id) {
+            delete roomState.cardOwners[targetCard];
+
+            if (roomState.players[socket.id]) {
+                roomState.players[socket.id].cards = roomState.players[socket.id].cards.filter(c => c !== targetCard);
+                if (roomState.players[socket.id].cards.length === 0) {
+                    delete roomState.players[socket.id];
+                }
+            }
+            broadcastRoomState();
         }
     });
 
-    // 2. ካርቴላ ሲተው/ሲሰረዝ (Deselect Card)
-    socket.on('deselectCard', ({ cardNum, userId }) => {
-        const targetCard = Number(cardNum);
-        
-        roomState.soldCards = roomState.soldCards.filter(c => Number(c) !== targetCard);
-
-        if (roomState.players[socket.id]) {
-            roomState.players[socket.id].cards = roomState.players[socket.id].cards.filter(c => Number(c) !== targetCard);
-            if (roomState.players[socket.id].cards.length === 0) {
-                delete roomState.players[socket.id];
-            }
-        }
-
-        io.emit('cardUpdated', {
-            soldCards: roomState.soldCards,
-            action: 'deselected',
-            cardNum: targetCard
-        });
-
-        io.emit('roomState', {
-            soldCards: roomState.soldCards,
-            timeLeft: roomState.timeLeft,
-            playersCount: Object.keys(roomState.players).length,
-            status: roomState.status,
-            calledNumbers: roomState.calledNumbers
-        });
-    });
-
-    // 3. የተመረጡ ካርቴላዎች መረጃ
-    socket.on('getUserCards', ({ chosenCards, userId }, callback) => {
+    // 3. የተመረጡ ካርቴላዎችን ማምጣት
+    socket.on('getUserCards', ({ chosenCards }, callback) => {
         let userCards = {};
-        if (chosenCards && Array.isArray(chosenCards)) {
+        if (Array.isArray(chosenCards)) {
             chosenCards.forEach(cardNo => {
                 const targetCard = Number(cardNo);
                 if (bingoCardsDatabase[targetCard]) {
@@ -368,7 +302,9 @@ io.on('connection', (socket) => {
                 }
             });
         }
-        callback(userCards);
+        if (typeof callback === 'function') {
+            callback(userCards);
+        }
     });
 
     // 4. Bingo Claim
@@ -382,11 +318,11 @@ io.on('connection', (socket) => {
             roomState.status = 'FINISHED';
             clearInterval(roomState.gameInterval);
             
-            const totalPrize = roomState.soldCards.length * 20;
+            const totalPrize = Object.keys(roomState.cardOwners).length * 20;
 
             io.emit('gameWinner', {
                 userId,
-                userName,
+                userName: userName || "አሸናፊ",
                 cardNo: targetCard,
                 prize: totalPrize,
                 cardMatrix: cardArray
@@ -398,28 +334,18 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. ተጫዋች ሲወጣ (Disconnect)
+    // 5. ተጫዋች ሲወጣ (Disconnect Handling)
     socket.on('disconnect', () => {
         if (roomState.players[socket.id]) {
             const userCards = roomState.players[socket.id].cards || [];
             
-            if (roomState.status === 'WAITING' && userCards.length > 0) {
-                roomState.soldCards = roomState.soldCards.filter(c => !userCards.includes(Number(c)));
+            // ጨዋታው ከመጀመሩ በፊት ከወጣ የያዛቸውን ካርቴላዎች መልቀቅ
+            if (roomState.status === 'WAITING') {
+                userCards.forEach(cardNum => {
+                    delete roomState.cardOwners[cardNum];
+                });
                 delete roomState.players[socket.id];
-
-                io.emit('cardUpdated', {
-                    soldCards: roomState.soldCards,
-                    action: 'deselected',
-                    cardNum: null
-                });
-
-                io.emit('roomState', {
-                    soldCards: roomState.soldCards,
-                    timeLeft: roomState.timeLeft,
-                    playersCount: Object.keys(roomState.players).length,
-                    status: roomState.status,
-                    calledNumbers: roomState.calledNumbers
-                });
+                broadcastRoomState();
             }
         }
     });
@@ -431,7 +357,7 @@ function resetRoom() {
 
     roomState = {
         status: 'WAITING',
-        soldCards: [],
+        cardOwners: {},
         players: {},
         timeLeft: 30,
         calledNumbers: [],
@@ -444,10 +370,10 @@ function resetRoom() {
     startLobbyTimer();
 }
 
-// --- 4. SERVER LISTEN ---
+// --- 5. SERVER LISTEN ---
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-    console.log(`CherBingo Backend & Bot running on port ${PORT}`);
+    console.log(`CherBingo Backend running on port ${PORT}`);
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
