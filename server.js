@@ -281,7 +281,7 @@ function checkBingoWinner(cardArray, calledNumbers) {
 
 io.on('connection', (socket) => {
 
-    // አዲስ ለገባ ተጫዋች አሁን ያለውን የክፍል ሁኔታና የተያዙ ካርቴላዎች ማሳወቅ
+    // አዲስ ለገባ ተጫዋች አሁናዊ መረጃ መላክ
     socket.emit('roomState', {
         soldCards: roomState.soldCards,
         timeLeft: roomState.timeLeft,
@@ -298,39 +298,49 @@ io.on('connection', (socket) => {
     socket.on('selectCard', ({ cardNum, userId }) => {
         if (!roomState.soldCards.includes(cardNum)) {
             roomState.soldCards.push(cardNum);
-            
-            // የትኛውን ካርቴላ የትኛው ተጫዋች እንደያዘው መመዝገብ
             roomState.players[socket.id] = { userId, cardNum };
 
-            // ለሁሉም ተጫዋቾች የተያዙትን ካርቴላዎች አዘምን (ይህ ካርቴላ ከሌሎች ላይ ይጠፋል)
-            io.emit('roomState', {
+            // ለሁሉም ሰዎች በአንድ ጊዜ እጅግ በፍጥነት ይላካል (io.volatile ወይም io.emit)
+            io.emit('cardUpdated', {
                 soldCards: roomState.soldCards,
-                timeLeft: roomState.timeLeft,
-                playersCount: Object.keys(roomState.players).length,
-                status: roomState.status,
-                calledNumbers: roomState.calledNumbers
+                action: 'selected',
+                cardNum: cardNum
             });
         }
     });
 
-    // 2. ካርቴላ ሲተው/ሲሰረዝ (Deselect Card - ለሌሎች Active እንዲሆን)
+    // 2. ካርቴላ ሲተው/ሲሰረዝ (Deselect Card) - በፍጥነት ነፃ ያደርጋል
     socket.on('deselectCard', ({ cardNum, userId }) => {
-        // ካርቴላውን ከተያዙት (soldCards) ዝርዝር ውስጥ ማውጣት
         roomState.soldCards = roomState.soldCards.filter(c => c !== cardNum);
-        
-        // የተጫዋቹን መረጃ ማጽዳት
         delete roomState.players[socket.id];
-        
-        // ለሁሉም ተጫዋቾች አበስር (ካርቴላው ለሌሎች ድጋሚ ክፍት/Active ይሆናል)
-        io.emit('roomState', {
+
+        // ለሁሉም ሰዎች በአንድ ጊዜ እጅግ በፍጥነት ይላካል
+        io.emit('cardUpdated', {
             soldCards: roomState.soldCards,
-            timeLeft: roomState.timeLeft,
-            playersCount: Object.keys(roomState.players).length,
-            status: roomState.status,
-            calledNumbers: roomState.calledNumbers
+            action: 'deselected',
+            cardNum: cardNum
         });
     });
 
+    // 3. ተጫዋች ሲወጣ ወይም አፑን ሲዘጋው
+    socket.on('disconnect', () => {
+        if (roomState.players[socket.id]) {
+            const userCard = roomState.players[socket.id].cardNum;
+            
+            if (roomState.status === 'WAITING' && userCard) {
+                roomState.soldCards = roomState.soldCards.filter(c => c !== userCard);
+                delete roomState.players[socket.id];
+
+                io.emit('cardUpdated', {
+                    soldCards: roomState.soldCards,
+                    action: 'deselected',
+                    cardNum: userCard
+                });
+            }
+        }
+    });
+
+    // ሌሎቹ Socket Event-ዎች (getUserCards, claimBingo...) እንዳሉ ይቆያሉ
     socket.on('getUserCards', ({ chosenCards, userId }, callback) => {
         let userCards = {};
         chosenCards.forEach(cardNo => {
@@ -360,6 +370,7 @@ io.on('connection', (socket) => {
             }, 5000);
         }
     });
+});
 
     // 3. ተጫዋቹ ጨዋታው ሳይጀምር ከወጣ (Disconnect/Closed WebApp) ካርቴላውን ነፃ ማድረግ
     socket.on('disconnect', () => {
