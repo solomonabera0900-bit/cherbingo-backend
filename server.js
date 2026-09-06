@@ -18,7 +18,7 @@ const io = new Server(server, {
 
 // --- 2. TELEGRAM BOT SETUP ---
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
-const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app"; // የ Vercel ሊንክህ
+const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app";
 
 const bot = new Telegraf(BOT_TOKEN);
 const userStates = {};
@@ -291,24 +291,29 @@ io.on('connection', (socket) => {
         startLobbyTimer();
     }
 
-    // 1. ካርቴላ ሲመረጥ (Select Card)
+    // 1. ካርቴላ ሲመረጥ (Select Card with Race Condition Prevention)
     socket.on('selectCard', ({ cardNum, userId }) => {
-        if (!roomState.soldCards.includes(cardNum)) {
-            roomState.soldCards.push(cardNum);
-            
+        if (roomState.status !== 'WAITING') return;
+
+        const targetCard = Number(cardNum);
+
+        if (!roomState.soldCards.includes(targetCard)) {
+            roomState.soldCards.push(targetCard);
+
             if (!roomState.players[socket.id]) {
                 roomState.players[socket.id] = { userId, cards: [] };
             }
-            if (!roomState.players[socket.id].cards.includes(cardNum)) {
-                roomState.players[socket.id].cards.push(cardNum);
+            if (!roomState.players[socket.id].cards.includes(targetCard)) {
+                roomState.players[socket.id].cards.push(targetCard);
             }
 
             io.emit('cardUpdated', {
                 soldCards: roomState.soldCards,
                 action: 'selected',
-                cardNum: cardNum
+                cardNum: targetCard,
+                selectedBy: userId
             });
-            
+
             io.emit('roomState', {
                 soldCards: roomState.soldCards,
                 timeLeft: roomState.timeLeft,
@@ -316,15 +321,22 @@ io.on('connection', (socket) => {
                 status: roomState.status,
                 calledNumbers: roomState.calledNumbers
             });
+        } else {
+            socket.emit('cardSelectFailed', {
+                cardNum: targetCard,
+                message: "ይህ ካርቴላ ቀድሞ በሌላ ተጫዋች ተይዟል!"
+            });
         }
     });
 
     // 2. ካርቴላ ሲተው/ሲሰረዝ (Deselect Card)
     socket.on('deselectCard', ({ cardNum, userId }) => {
-        roomState.soldCards = roomState.soldCards.filter(c => c !== cardNum);
+        const targetCard = Number(cardNum);
         
+        roomState.soldCards = roomState.soldCards.filter(c => Number(c) !== targetCard);
+
         if (roomState.players[socket.id]) {
-            roomState.players[socket.id].cards = roomState.players[socket.id].cards.filter(c => c !== cardNum);
+            roomState.players[socket.id].cards = roomState.players[socket.id].cards.filter(c => Number(c) !== targetCard);
             if (roomState.players[socket.id].cards.length === 0) {
                 delete roomState.players[socket.id];
             }
@@ -333,7 +345,7 @@ io.on('connection', (socket) => {
         io.emit('cardUpdated', {
             soldCards: roomState.soldCards,
             action: 'deselected',
-            cardNum: cardNum
+            cardNum: targetCard
         });
 
         io.emit('roomState', {
@@ -350,8 +362,9 @@ io.on('connection', (socket) => {
         let userCards = {};
         if (chosenCards && Array.isArray(chosenCards)) {
             chosenCards.forEach(cardNo => {
-                if (bingoCardsDatabase[cardNo]) {
-                    userCards[cardNo] = bingoCardsDatabase[cardNo];
+                const targetCard = Number(cardNo);
+                if (bingoCardsDatabase[targetCard]) {
+                    userCards[targetCard] = bingoCardsDatabase[targetCard];
                 }
             });
         }
@@ -362,7 +375,8 @@ io.on('connection', (socket) => {
     socket.on('claimBingo', ({ cardNo, userId, userName }) => {
         if (roomState.status !== 'PLAYING') return;
 
-        const cardArray = bingoCardsDatabase[cardNo];
+        const targetCard = Number(cardNo);
+        const cardArray = bingoCardsDatabase[targetCard];
 
         if (cardArray && checkBingoWinner(cardArray, roomState.calledNumbers)) {
             roomState.status = 'FINISHED';
@@ -373,7 +387,7 @@ io.on('connection', (socket) => {
             io.emit('gameWinner', {
                 userId,
                 userName,
-                cardNo,
+                cardNo: targetCard,
                 prize: totalPrize,
                 cardMatrix: cardArray
             });
@@ -390,7 +404,7 @@ io.on('connection', (socket) => {
             const userCards = roomState.players[socket.id].cards || [];
             
             if (roomState.status === 'WAITING' && userCards.length > 0) {
-                roomState.soldCards = roomState.soldCards.filter(c => !userCards.includes(c));
+                roomState.soldCards = roomState.soldCards.filter(c => !userCards.includes(Number(c)));
                 delete roomState.players[socket.id];
 
                 io.emit('cardUpdated', {
