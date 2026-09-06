@@ -1,203 +1,173 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
-const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
 
-const PORT = process.env.PORT || 5000;
-const BOT_TOKEN = process.env.BOT_TOKEN || "8677559720:AAF5alz9e2Ejoxb-HTKehicesJTyfRkrArE";
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://cherbingo.vercel.app";
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
+});
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+let roomState = {
+    status: 'SELECTION', 
+    soldCards: {},
+    playersCount: 0,
+    selectionTimeLeft: 30
+};
 
-// In-Memory Database
-const usersDb = {};
+let calledNumbers = [];
+let availableNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
+let gameInterval = null;
+let selectionInterval = null;
 
-function getUserData(userId) {
-    if (!usersDb[userId]) {
-        usersDb[userId] = {
-            registered: true,
-            balance: 50.00,
-            history: [
-                { type: "GAME BUY", time: "14:12", amt: 10.00, bal: 50.00, status: "SUCCESS" },
-                { type: "DEPOSIT TELE BIRR", time: "14:11", amt: 20.00, bal: 60.00, status: "SUCCESS" }
-            ]
-        };
+function generateBingoCard(cardNo) {
+    let card = [];
+    const ranges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]];
+    let cols = ranges.map(([min, max]) => {
+        let nums = new Set();
+        while (nums.size < 5) {
+            nums.add(Math.floor(Math.random() * (max - min + 1)) + min);
+        }
+        return Array.from(nums);
+    });
+
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            if (row === 2 && col === 2) {
+                card.push('★');
+            } else {
+                card.push(cols[col][row]);
+            }
+        }
     }
-    return usersDb[userId];
+    return card;
 }
 
-// ---------------- TELEGRAM BOT COMMANDS ----------------
+function startSelectionPhase() {
+    roomState.status = 'SELECTION';
+    roomState.soldCards = {};
+    roomState.selectionTimeLeft = 30;
+    calledNumbers = [];
+    availableNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
 
-bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    const firstName = msg.from.first_name || "ተጫዋች";
-    const text = `👋 **እንኳን ወደ Cherbingo በሰላም መጡ፣ ${firstName}!**\n\n` +
-                 `🎮 ጨዋታ መጀመር ከፈለጉ /play የሚለውን ይጫኑ ወይም ከታች ያሉትን ትዕዛዞች ይጠቀሙ::`;
-    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
-});
+    io.emit('roomReset');
 
-bot.onText(/\/register/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const userData = getUserData(userId);
+    if (selectionInterval) clearInterval(selectionInterval);
 
-    if (userData.registered) {
-        bot.sendMessage(chatId, "✅ ቀደም ብለው ተመዝግበዋል።");
-    } else {
-        userData.registered = true;
-        bot.sendMessage(chatId, "✅ ምዝገባዎ በስኬት ተጠናቋል!");
-    }
-});
+    selectionInterval = setInterval(() => {
+        roomState.selectionTimeLeft--;
+        
+        io.emit('roomState', {
+            soldCards: Object.keys(roomState.soldCards).map(Number),
+            timeLeft: roomState.selectionTimeLeft,
+            playersCount: io.engine.clientsCount,
+            status: roomState.status
+        });
 
-bot.onText(/\/play/, (msg) => {
-    const chatId = msg.chat.id;
-    const options = {
-        parse_mode: "Markdown",
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: "🎮 PLAY  |  10 ብር", web_app: { url: FRONTEND_URL } }],
-                [{ text: "🔥 SuperBingo  |  50 ብር", web_app: { url: FRONTEND_URL } }],
-                [{ text: "⚽ Cherbingo Bonus", web_app: { url: FRONTEND_URL } }]
-            ]
+        if (roomState.selectionTimeLeft <= 0) {
+            clearInterval(selectionInterval);
+            startCountdown();
         }
-    };
-    bot.sendMessage(chatId, "📍 **PLAY IN:**\nለመጫወት የሚፈልጉትን ክፍል (Room) ይምረጡ:", options);
-});
+    }, 1000);
+}
 
-bot.onText(/\/balance/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const balance = getUserData(userId).balance;
-    bot.sendMessage(chatId, `💰 **ቀሪ ሂሳብ (Available): ${balance.toFixed(2)} ETB**`, { parse_mode: "Markdown" });
-});
+function startCountdown() {
+    io.emit('startCountdown');
+    setTimeout(() => { startBingoGame(); }, 3000);
+}
 
-bot.onText(/\/deposit/, (msg) => {
-    const chatId = msg.chat.id;
-    const options = {
-        parse_mode: "Markdown",
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: "CBE BIRR", callback_data: "dep_cbe" },
-                    { text: "TELE BIRR", callback_data: "dep_tele" }
-                ]
-            ]
+function startBingoGame() {
+    roomState.status = 'PLAYING';
+    io.emit('gameStarted');
+
+    if (gameInterval) clearInterval(gameInterval);
+
+    // 2. በየ 5 ሰከንዱ ቁጥር መጥራት
+    gameInterval = setInterval(() => {
+        if (availableNumbers.length === 0) {
+            // 1. ማንም ባይገባም 75ቱ ሲያልቁ ዳግም ማስጀመር
+            clearInterval(gameInterval);
+            setTimeout(() => { startSelectionPhase(); }, 3000);
+            return;
         }
-    };
-    bot.sendMessage(chatId, "💳 **የማስገቢያ መንገድ ይምረጡ (Select Deposit Method)**\n\nእባክዎ ሂሳብ ለመሙላት የሚጠቀሙበትን መንገድ ይምረጡ:", options);
-});
 
-bot.onText(/\/withdraw/, (msg) => {
-    const chatId = msg.chat.id;
-    const text = "📬 **ገንዘብ ያውጡ (Withdraw Funds)**\n\n" +
-                 "እባክዎ የሚያወጡትን የገንዘብ መጠን እና የሂሳብ ቁጥርዎን ያስገቡ:\n" +
-                 "*(ምሳሌ፡ 100 0912345678 Telebirr)*";
-    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
-});
+        const randomIndex = Math.floor(Math.random() * availableNumbers.length);
+        const calledNum = availableNumbers.splice(randomIndex, 1)[0];
+        calledNumbers.push(calledNum);
 
-bot.onText(/\/history/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const history = getUserData(userId).history;
+        let letter = '';
+        if (calledNum <= 15) letter = 'B';
+        else if (calledNum <= 30) letter = 'I';
+        else if (calledNum <= 45) letter = 'N';
+        else if (calledNum <= 60) letter = 'G';
+        else letter = 'O';
 
-    let text = "📜 **የክፍያ ታሪክ**\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n";
-    history.forEach((item) => {
-        text += `🔹 **${item.type} (${item.time})**\n` +
-                `💰 **መጠን:** ${item.amt.toFixed(2)} ETB\n` +
-                `💳 **ቀሪ ሂሳብ:** ${item.bal.toFixed(2)} ETB\n` +
-                `✅ **Status:** ${item.status}\n` +
-                `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n`;
+        io.emit('newBall', {
+            num: calledNum,
+            letter: letter,
+            ballsCalled: calledNumbers.length
+        });
+
+    }, 5000);
+}
+
+io.on('connection', (socket) => {
+    socket.emit('roomState', {
+        soldCards: Object.keys(roomState.soldCards).map(Number),
+        timeLeft: roomState.selectionTimeLeft,
+        playersCount: io.engine.clientsCount,
+        status: roomState.status
     });
-    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+
+    socket.on('selectCard', ({ cardNum, userId }) => {
+        if (roomState.status === 'SELECTION' && !roomState.soldCards[cardNum]) {
+            roomState.soldCards[cardNum] = userId;
+            io.emit('cardSold', { cardNum, userId });
+        }
+    });
+
+    socket.on('deselectCard', ({ cardNum, userId }) => {
+        if (roomState.status === 'SELECTION' && roomState.soldCards[cardNum] === userId) {
+            delete roomState.soldCards[cardNum];
+            io.emit('cardFreed', { cardNum });
+        }
+    });
+
+    socket.on('getUserCards', ({ chosenCards, userId }, callback) => {
+        let cardsData = {};
+        chosenCards.forEach(cardNo => {
+            cardsData[cardNo] = generateBingoCard(cardNo);
+        });
+        callback(cardsData);
+    });
+
+    socket.on('claimBingo', ({ cardNo, userId, userName }) => {
+        if (roomState.status === 'PLAYING') {
+            clearInterval(gameInterval);
+            const prize = Object.keys(roomState.soldCards).length * 20;
+            
+            io.emit('gameWinner', {
+                userName: userName || 'ተጫዋች',
+                cardNo: cardNo,
+                prize: prize,
+                cardMatrix: []
+            });
+
+            setTimeout(() => { startSelectionPhase(); }, 7000);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        io.emit('playersUpdate', { count: io.engine.clientsCount });
+    });
 });
 
-bot.onText(/\/instructions/, (msg) => {
-    const chatId = msg.chat.id;
-    const rulesCard = 
-`\`\`\`
-    B   I   N   G   O
-+---+---+---+---+---+
-| ✅| ✅| ✅| ✅| ✅| <- መስመር
-+---+---+---+---+---+
-|   |   |   |   |   |
-+---+---+---+---+---+
-|   |   |   |   |   |
-+---+---+---+---+---+
-    B   I   N   G   O
-+---+---+---+---+---+
-| ✅|   |   |   | ✅|
-+---+---+---+---+---| <- 4 ኮርነሮች
-|   |   |   |   |   |
-+---+---+---+---+---+
-| ✅|   |   |   | ✅|
-+---+---+---+---+---+
-\`\`\``;
+startSelectionPhase();
 
-    const text = "ℹ️ **የጨዋታ ህጎች (Game Rules)**\n" +
-                 "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n" +
-                 "ጨዋታውን ለማሸነፍ ከተፈለገበት አንድ መስመር ወይም አራቱን ኮርነሮች ቀድሞ ማግኘት ያስፈልጋል።\n\n" +
-                 `${rulesCard}\n\n` +
-                 "💰 **ከአንድ በላይ አሸናፊ ካለ ደራሽ ገንዘቡ እኩል ይከፈላል።**";
-
-    bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
-});
-
-// ---------------- BUTTON HANDLERS ----------------
-
-bot.on('callback_query', (query) => {
-    const chatId = query.message.chat.id;
-    bot.answerCallbackQuery(query.id);
-
-    if (query.data === "dep_tele") {
-        const teleText = "📍 **የ TELE-Birr አካውንት**\n\n" +
-                         "Merchant ID / የሽያጭ መለያ: **11111 (Chernet Gobezie Nigat)**\n\n" +
-                         "**መመሪያ:**\n" +
-                         "1. ከላይ ባለው የ TELE-Birr አካውንት (Pay for Merchant) በሚለው ገንዘብ ያስገቡ።\n" +
-                         "2. ብሩን ስትልኩ የከፈላችሁበትን መረጃ የያዘ አጭር የጽሁፍ መልእክት (SMS) ይደርሳችኋል።\n" +
-                         "3. የደረሳችሁን SMS ሙሉውን Copy በማድረግ እዚህ Telegram ላይ Paste አድርገው ይላኩ።\n\n" +
-                         "የሚያጋጥማችሁ የክፍያ ችግር ካለ፦\n" +
-                         "@CherbingoSupport";
-        bot.sendMessage(chatId, teleText, { parse_mode: "Markdown" });
-    } else if (query.data === "dep_cbe") {
-        const cbeText = "📍 **የ CBE-Birr አካውንት**\n\n" +
-                        "CBE-BIRR Merchant: **00000 (Chernet Gobezie Nigat)**\n\n" +
-                        "**መመሪያ:**\n" +
-                        "1. ከላይ ባለው የ CBE-Birr አካውንት Pay for Merchant በሚለው ገንዘብ ያስገቡ።\n" +
-                        "2. ብሩን ስትልኩ የከፈላችሁበትን መረጃ የያዘ አጭር የጽሁፍ መልእክት (SMS) ይደርሳችኋል።\n" +
-                        "3. የደረሳችሁን SMS ሙሉውን Copy በማድረግ እዚህ Telegram ላይ Paste አድርገው ይላኩ።\n\n" +
-                        "የሚያጋጥማችሁ የክፍያ ችግር ካለ፦\n" +
-                        "@CherbingoSupport";
-        bot.sendMessage(chatId, cbeText, { parse_mode: "Markdown" });
-    }
-});
-
-// ---------------- SMS TEXT PASTE HANDLER ----------------
-
-bot.on('message', (msg) => {
-    if (msg.text && msg.text.startsWith('/')) return;
-
-    const chatId = msg.chat.id;
-    const text = msg.text || "";
-
-    if (text.toLowerCase().includes("telebirr") || text.toLowerCase().includes("cbe") || text.toLowerCase().includes("txn")) {
-        bot.sendMessage(
-            chatId,
-            "⏳ **የክፍያ መልእክትዎ ደርሶናል!**\nመረጃው እየተመረመረ ነው፤ በጥቂት ደቂቃዎች ውስጥ ሂሳብዎ ላይ ይደመራል።",
-            { parse_mode: "Markdown" }
-        );
-    }
-});
-
-// ---------------- API ENDPOINTS FOR FRONTEND ----------------
-
-app.get('/api/user/:id', (req, res) => {
-    const userId = req.params.id;
-    res.json(getUserData(userId));
-});
-
-app.listen(PORT, () => {
-    console.log(`🤖 Cherbingo Backend server running on port ${PORT}...`);
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`CherBingo Server running on port ${PORT}`);
 });
