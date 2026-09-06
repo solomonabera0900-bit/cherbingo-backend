@@ -16,9 +16,9 @@ const io = new Server(server, {
     }
 });
 
-// --- 2. TELEGRAM BOT SETUP ---
+// --- 2. TELEGRAM BOT SETUP (የተስተካከለ) ---
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
-const WEB_APP_URL = "https://chernetbingo-frontend.vercel.app";
+const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app"; // ትክክለኛው የ Vercel ሊንክህ
 
 const bot = new Telegraf(BOT_TOKEN);
 const userStates = {};
@@ -36,14 +36,14 @@ bot.start((ctx) => {
     );
 });
 
-// Bot /play
+// Bot /play - እያንዳንዱ የክፍል ቁልፍ ሲጫን WebApp ይከፍታል
 bot.command('play', (ctx) => {
     ctx.reply(
         "🕹 PLAY IN:\nChoose a room to join the game:",
         Markup.inlineKeyboard([
-            [Markup.button.callback("🎮 PLAY | 10 ብር", "room_10")],
-            [Markup.button.callback("SuperBingo | 50 ብር", "room_50")],
-            [Markup.button.callback("⚽️ GoodBingo Bonus", "room_bonus")]
+            [Markup.button.webApp("🎮 PLAY | 10 ብር", WEB_APP_URL)],
+            [Markup.button.webApp("🔥 SuperBingo | 50 ብር", WEB_APP_URL)],
+            [Markup.button.webApp("⚽️ GoodBingo Bonus", WEB_APP_URL)]
         ])
     );
 });
