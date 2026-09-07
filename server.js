@@ -18,7 +18,7 @@ const io = new Server(server, {
 
 // --- 2. TELEGRAM BOT SETUP ---
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "YOUR_ADMIN_TELEGRAM_ID"; // ለአድሚን ማሳወቂያ የሚሆን
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "YOUR_ADMIN_TELEGRAM_ID";
 const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app";
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -26,6 +26,16 @@ const userStates = {};
 
 // የተጫዋቾች ቀሪ ሂሳብ (Temporary Database)
 const userBalances = {}; // { userId: balance }
+
+// --- የቴሌግራም መልእክት መላኪያ ረዳት ተግባር (Helper Function) ---
+async function sendTelegramMsg(chatId, text) {
+    if (!chatId) return;
+    try {
+        await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    } catch (err) {
+        console.error(`Error sending message to ${chatId}:`, err.message);
+    }
+}
 
 bot.start((ctx) => {
     const firstName = ctx.from.first_name || "ተጫዋች";
@@ -244,34 +254,27 @@ io.on('connection', (socket) => {
         startLobbyTimer();
     }
 
-    // ==========================================
-    // ➕ 1. DEPOSIT & WITHDRAW HANDLERS (NEW)
-    // ==========================================
-
-    // የገቢ (Deposit) ጥያቄዎችን ማስተናገጃ
+    // --- DEPOSIT HANDLER ---
     socket.on('requestDeposit', ({ userId, userName, amount, txn }) => {
         console.log(`[DEPOSIT] User: ${userName} (${userId}), Amount: ${amount}, Txn: ${txn}`);
         
-        // ለአድሚን በቴሌግራም መልእክት መላክ (ለማረጋገጫ)
         if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== "YOUR_ADMIN_TELEGRAM_ID") {
-            bot.telegram.sendMessage(
-                ADMIN_CHAT_ID,
+            const adminDepositMsg = 
                 `📥 **አዲስ የገቢ (Deposit) ጥያቄ**\n\n` +
                 `👤 ተጫዋች: ${userName} (ID: \`${userId}\`)\n` +
                 `💰 መጠን: ${amount} ETB\n` +
                 `🧾 Txn ID: \`${txn}\`\n\n` +
-                `ሂሳቡን ለማፅደቅ ከተረጋገጠ በኋላ Balance ይጨምሩለት።`,
-                { parse_mode: 'Markdown' }
-            ).catch(err => console.error("Admin notification error:", err));
+                `ሂሳቡን ለማፅደቅ ከተረጋገጠ በኋላ Balance ይጨምሩለት።`;
+
+            sendTelegramMsg(ADMIN_CHAT_ID, adminDepositMsg);
         }
 
-        // ለሙከራ እንዲመች ተጫዋቹ ሲልክ የወቅቱን Balance መላክ
         if (!userBalances[userId]) userBalances[userId] = 0;
         socket.emit('balanceUpdate', { balance: userBalances[userId] });
     });
 
-    // የወጪ (Withdraw) ጥያቄዎችን ማስተናገጃ
-    socket.on('requestWithdraw', ({ userId, userName, amount, account }) => {
+    // --- WITHDRAW HANDLER ---
+    socket.on('requestWithdraw', async ({ userId, userName, amount, account }) => {
         const withdrawAmt = parseFloat(amount);
         const currentBal = userBalances[userId] || 0;
 
@@ -285,32 +288,41 @@ io.on('connection', (socket) => {
         userBalances[userId] -= withdrawAmt;
         socket.emit('balanceUpdate', { balance: userBalances[userId] });
 
-        // ለአድሚን በቴሌግራም መልእክት መላክ
+        const timeString = new Date().toLocaleTimeString('am-ET');
+
+        // ለተጫዋቹ የሚላክ ማሳወቂያ
+        const playerMsg = 
+            `💸 *የገንዘብ ማውጣት ጥያቄዎ ተመዝግቧል*\n\n` +
+            `💵 *የተጠየቀው መጠን:* \`${withdrawAmt}\` ETB\n` +
+            `🏦 *የተላከበት አካውንት:* \`${account}\`\n` +
+            `⏰ *ሰዓት:* ${timeString}\n\n` +
+            `የቤት አድሚኑ ጥያቄዎን ተቀብሎ በቅርቡ ክፍያውን ይፈጽማል።`;
+        
+        await sendTelegramMsg(userId, playerMsg);
+
+        // ለአድሚኑ የሚላክ ማሳወቂያ
         if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== "YOUR_ADMIN_TELEGRAM_ID") {
-            bot.telegram.sendMessage(
-                ADMIN_CHAT_ID,
-                `📤 **አዲስ የወጪ (Withdraw) ጥያቄ**\n\n` +
-                `👤 ተጫዋች: ${userName} (ID: \`${userId}\`)\n` +
-                `💰 መጠን: ${withdrawAmt} ETB\n` +
-                `ከፋይ አካውንት: \`${account}\`\n\n` +
-                `እባክዎን ክፍያውን ይፈጽሙላቸው።`,
-                { parse_mode: 'Markdown' }
-            ).catch(err => console.error("Admin notification error:", err));
+            const adminMsg = 
+                `⚠️ *አዲስ የገንዘብ ማውጣት ጥያቄ!*\n\n` +
+                `👤 *ተጫዋች:* ${userName}\n` +
+                `🆔 *Telegram ID:* \`${userId}\`\n` +
+                `💵 *የተጠየቀው መጠን:* \`${withdrawAmt}\` ETB\n` +
+                `🏦 *አካውንት/ስልክ:* \`${account}\`\n` +
+                `⏰ *ሰዓት:* ${timeString}\n\n` +
+                `እባክዎን ክፍያውን ፈጽመው በቦቱ ይደብቁ/ያጽድቁ።`;
+            
+            await sendTelegramMsg(ADMIN_CHAT_ID, adminMsg);
         }
     });
 
-    // ==========================================
-
-    // 2. ካርቴላ መምረጥ (Strict Selection with Collision Check)
+    // --- CARD SELECTION ---
     socket.on('selectCard', ({ cardNum, userId, userName }) => {
         const targetCard = Number(cardNum);
 
-        // ጨዋታው ከተጀመረ አይቻልም
         if (roomState.status !== 'WAITING') {
             return socket.emit('cardSelectFailed', { cardNum: targetCard, message: "ጨዋታው ተጀምሯል!" });
         }
 
-        // ካርቴላው በሌላ ሰው ከተያዘ ወዲያውኑ Reject ማድረግ
         if (roomState.cardOwners[targetCard] && roomState.cardOwners[targetCard] !== socket.id) {
             return socket.emit('cardSelectFailed', {
                 cardNum: targetCard,
@@ -318,7 +330,6 @@ io.on('connection', (socket) => {
             });
         }
 
-        // ለዚህ Socket ካርቴላውን መመደብ
         roomState.cardOwners[targetCard] = socket.id;
 
         if (!roomState.players[socket.id]) {
@@ -329,20 +340,16 @@ io.on('connection', (socket) => {
             roomState.players[socket.id].cards.push(targetCard);
         }
 
-        // ለተጫዋቹ ሂሳቡን መላክ
         if (userId) {
             const userBal = userBalances[userId] || 0.00;
             socket.emit('balanceUpdate', { balance: userBal });
         }
 
-        // ለላከው ሰው ስኬታማ መሆኑን ማሳወቅ
         socket.emit('cardSelectSuccess', { cardNum: targetCard });
-
-        // ለሁሉም ተጫዋቾች የተወሰደውን ካርቴላ ማሳወቅ
         broadcastRoomState();
     });
 
-    // 3. ካርቴላን መሰረዝ/መልሶ መልቀቅ
+    // --- DESELECT CARD ---
     socket.on('deselectCard', ({ cardNum }) => {
         const targetCard = Number(cardNum);
 
@@ -359,7 +366,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. የተመረጡ ካርቴላዎችን ማምጣት
+    // --- GET USER CARDS ---
     socket.on('getUserCards', ({ chosenCards }, callback) => {
         let userCards = {};
         if (Array.isArray(chosenCards)) {
@@ -375,8 +382,8 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. Bingo Claim
-    socket.on('claimBingo', ({ cardNo, userId, userName }) => {
+    // --- CLAIM BINGO ---
+    socket.on('claimBingo', async ({ cardNo, userId, userName }) => {
         if (roomState.status !== 'PLAYING') return;
 
         const targetCard = Number(cardNo);
@@ -388,7 +395,6 @@ io.on('connection', (socket) => {
             
             const totalPrize = Object.keys(roomState.cardOwners).length * 20;
 
-            // ለአሸናፊው ሂሳብ መጨመር
             if (userId) {
                 userBalances[userId] = (userBalances[userId] || 0) + totalPrize;
                 socket.emit('balanceUpdate', { balance: userBalances[userId] });
@@ -402,13 +408,37 @@ io.on('connection', (socket) => {
                 cardMatrix: cardArray
             });
 
+            // የቴሌግራም ማሳወቂያዎች
+            const timeString = new Date().toLocaleTimeString('am-ET');
+
+            const playerBingoMsg = 
+                `🎉 *እንኳን ደስ አለዎት! BINGO አድርገዋል!* 🎉\n\n` +
+                `💰 *የአሸናፊነት መጠን:* \`${totalPrize}\` ETB\n` +
+                `🎫 *የካርድ ቁጥር:* \`${targetCard}\`\n` +
+                `⏰ *ሰዓት:* ${timeString}\n\n` +
+                `መልካም እድል! ሂሳብዎ ላይ ተጨምሯል።`;
+
+            await sendTelegramMsg(userId, playerBingoMsg);
+
+            if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== "YOUR_ADMIN_TELEGRAM_ID") {
+                const adminBingoMsg = 
+                    `🔔 *አዲስ የ BINGO አሸናፊ!*\n\n` +
+                    `👤 *ተጫዋች:* ${userName || 'ያልታወቀ'}\n` +
+                    `🆔 *Telegram ID:* \`${userId}\`\n` +
+                    `💰 *ያሸነፈው መጠን:* \`${totalPrize}\` ETB\n` +
+                    `🎫 *የካርድ ቁጥር:* \`${targetCard}\`\n` +
+                    `⏰ *ሰዓት:* ${timeString}`;
+
+                await sendTelegramMsg(ADMIN_CHAT_ID, adminBingoMsg);
+            }
+
             setTimeout(() => {
                 resetRoom();
             }, 6000);
         }
     });
 
-    // 6. ተጫዋች ሲወጣ (Disconnect Handling)
+    // --- DISCONNECT ---
     socket.on('disconnect', () => {
         if (roomState.players[socket.id]) {
             const userCards = roomState.players[socket.id].cards || [];
