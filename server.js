@@ -237,6 +237,44 @@ function checkBingoWinner(cardArray, calledNumbers) {
 
     return false;
 }
+// አፑ የሚያስፈልገውን JSON body እንዲያነብ Express JSON parser ማከል
+app.use(express.json());
+
+// ጊዜያዊ የተቀበልናቸውን Telebirr SMSዎች መያዣ
+const pendingDeposits = new Map();
+
+// 1. ከAuto Forward SMS አፕ ኤስኤምኤስ መቀበያ አድራሻ (Endpoint)
+app.post('/api/telebirr-sms', (req, res) => {
+    const { sender, message, secret } = req.body;
+
+    // የደህንነት ማረጋገጫ (ከተፈለገ)
+    if (secret !== "MY_SECRET_KEY_123") {
+        return res.status(401).json({ error: "አልተፈቀደም!" });
+    }
+
+    console.log("[SMS RECEIVED]:", message);
+
+    // ከኤስኤምኤሱ ውስጥ Txn ID እና የብር መጠን በ Regex ማውጣት
+    const txnMatch = message.match(/Txn ID:\s*([A-Z0-9]+)/i);
+    const amountMatch = message.match(/ETB\s*([\d\.]+)/i);
+
+    if (txnMatch && amountMatch) {
+        const txnId = txnMatch[1].trim();
+        const amount = parseFloat(amountMatch[1]);
+
+        // በሜሞሪ መመዝገብ
+        pendingDeposits.set(txnId, {
+            amount: amount,
+            used: false,
+            timestamp: Date.now()
+        });
+
+        console.log(`[SAVED DEPOSIT] Txn: ${txnId}, Amount: ${amount} ETB`);
+        return res.status(200).json({ status: "success" });
+    }
+
+    return res.status(400).json({ error: "የቴሌብር SMS አልተገኘም" });
+});
 
 // --- 4. SOCKET.IO EVENTS ---
 io.on('connection', (socket) => {
@@ -464,6 +502,48 @@ socket.on('requestDeposit', async (data) => {
             }
         }
     });
+});
+// --- AUTOMATED DEPOSIT HANDLER ---
+socket.on('requestDeposit', ({ userId, userName, amount, txn }) => {
+    console.log(`[DEPOSIT REQUEST] User: ${userName} (${userId}), Amount: ${amount}, Txn: ${txn}`);
+
+    const txnId = txn ? txn.trim() : "";
+    const deposit = pendingDeposits.get(txnId);
+
+    // 1. የትራንዛክሽን ቁጥሩ በሲስተሙ ካልተገኘ (SMS ገና ካልደረሰ)
+    if (!deposit) {
+        return socket.emit('errorMessage', "የተሳሳተ የትራንዛክሽን ቁጥር ወይም ክፍያዎ ገና አልደረሰም! እባክዎን ጥቂት ሰከንድ ቆይተው እንደገና ይሞክሩ።");
+    }
+
+    // 2. ቀደም ብሎ ጥቅም ላይ ውሎ ከሆነ
+    if (deposit.used) {
+        return socket.emit('errorMessage', "ይህ የትራንዛክሽን ቁጥር ቀደም ብሎ ጥቅም ላይ ውሏል!");
+    }
+
+    // 3. የተላከው የብር መጠን ከተጠየቀው ጋር ካልተገጣጠመ
+    if (deposit.amount !== parseFloat(amount)) {
+        return socket.emit('errorMessage', `የተላከው የብር መጠን (${deposit.amount} ETB) ከጠየቁት (${amount} ETB) ጋር አይገጥምም!`);
+    }
+
+    // 4. ሁሉም ከተስማማ - ክፍያውን አውቶማቲክ ማፅደቅ
+    deposit.used = true; // እንዳይደገም ማድረግ
+    userBalances[userId] = (userBalances[userId] || 0) + deposit.amount;
+
+    // ለተጫዋቹ የተሳካ ማሳወቂያ እና አዲስ Balance መላክ
+    socket.emit('balanceUpdate', { balance: userBalances[userId] });
+    socket.emit('depositSuccess', { message: `የ ${deposit.amount} ETB ገቢ ሂሳብዎ አውቶማቲክ ተረጋግጧል!` });
+
+    // ለአድሚኑ ማሳወቂያ መላክ
+    if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== "YOUR_ADMIN_TELEGRAM_ID") {
+        const adminMsg = 
+            `✅ **አውቶማቲክ የገቢ (Deposit) ማረጋገጫ**\n\n` +
+            `👤 ተጫዋች: ${userName} (ID: \`${userId}\`)\n` +
+            `💰 መጠን: ${deposit.amount} ETB\n` +
+            `🧾 Txn ID: \`${txnId}\`\n\n` +
+            `በሲስተሙ አውቶማቲክ ተረጋግጦ ሂሳቡ ተጨምሯል።`;
+
+        sendTelegramMsg(ADMIN_CHAT_ID, adminMsg);
+    }
 });
 
 function resetRoom() {
