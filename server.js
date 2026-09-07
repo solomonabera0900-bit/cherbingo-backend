@@ -3,155 +3,94 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { Telegraf, Markup } = require('telegraf');
-const mongoose = require('mongoose');
 
-// --- 1. SETUP EXPRESS & SOCKET.IO ---
+// --- 1. EXPRESS & SOCKET.IO SETUP ---
 const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
 });
 
-// --- 2. DATABASE CONNECTION (MongoDB) ---
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://solomonabera0900_db_user:1yxOtyBZFM14Th74@cherbingo.gllgiai.mongodb.net/bingoGame?retryWrites=true&w=majority";
-
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ MongoDB Database Connected Successfully!"))
-    .catch((err) => console.error("❌ MongoDB Connection Error:", err));
-
-// የተጫዋች ዳታ ሞዴል
-const userSchema = new mongoose.Schema({
-    telegramId: { type: String, required: true, unique: true },
-    firstName: String,
-    username: String,
-    balance: { type: Number, default: 0 },
-    createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model('User', userSchema);
-
-// --- 3. TELEGRAM BOT SETUP & ADMIN COMMANDS ---
+// --- 2. TELEGRAM BOT SETUP ---
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
-const WEB_APP_URL = process.env.WEB_APP_URL || "https://cherbingo-frontend-i6ci.vercel.app";
-const ADMIN_ID = process.env.ADMIN_ID || "1136433526"; 
+const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app";
 
 const bot = new Telegraf(BOT_TOKEN);
+const userStates = {};
 
-// /start command
-bot.start(async (ctx) => {
-    const telegramId = String(ctx.from.id);
+bot.start((ctx) => {
     const firstName = ctx.from.first_name || "ተጫዋች";
-    const username = ctx.from.username || "";
+    ctx.reply(
+        `እንኳን ወደ Chernet Bingo በደህና መጡ ${firstName}! 🎯\n\n` +
+        `ታች ያለውን ቁልፍ በመጫን ጨዋታውን መጀመር ይችላሉ፦`,
+        Markup.inlineKeyboard([
+            [Markup.button.webApp("🎮 ጨዋታውን ጀምር (Play Bingo)", WEB_APP_URL)]
+        ])
+    );
+});
 
-    try {
-        let user = await User.findOne({ telegramId });
-        if (!user) {
-            user = new User({ telegramId, firstName, username, balance: 0 });
-            await user.save();
+bot.command('play', (ctx) => {
+    ctx.reply(
+        "🕹 PLAY IN:\nChoose a room to join the game:",
+        Markup.inlineKeyboard([
+            [Markup.button.webApp("🎮 PLAY | 10 ብር", WEB_APP_URL)],
+            [Markup.button.webApp("🔥 SuperBingo | 50 ብር", WEB_APP_URL)],
+            [Markup.button.webApp("⚽️ GoodBingo Bonus", WEB_APP_URL)]
+        ])
+    );
+});
+
+bot.command('balance', (ctx) => {
+    ctx.reply(`💰 ቀሪ ሂሳብ (Available): 50.00 ETB`);
+});
+
+bot.command('deposit', (ctx) => {
+    ctx.reply(
+        `የ TELE-Birr አካውንት\n\n` +
+        `( Merchant ID ) - 715516 (Betelihem)\n\n` +
+        `1. በላይ ባለው የ TELE-Birr አካውንት ክፍያ ይፈጽሙ\n` +
+        `2. የደረሰዎትን SMS ሙሉውን ኮፒ በማድረግ እዚህ ፔስት ያድርጉ።`
+    );
+});
+
+bot.command('withdraw', (ctx) => {
+    userStates[ctx.from.id] = 'awaiting_withdraw';
+    ctx.reply("📩 እባክዎ የሚያወጡትን የገንዘብ መጠን ያስገቡ፦");
+});
+
+bot.command('instructions', (ctx) => {
+    ctx.reply("ℹ️ **የጨዋታ ህጎች**\nአንድ መስመር ወይም አራት ኮርነሮችን ቀድሞ የሞላ ያሸንፋል!");
+});
+
+bot.on('text', (ctx) => {
+    const userId = ctx.from.id;
+    const text = ctx.message.text;
+
+    if (userStates[userId] === 'awaiting_withdraw') {
+        const amount = parseInt(text);
+        if (isNaN(amount) || amount < 100) {
+            return ctx.reply("❌ ዝቅተኛው የማውጫ መጠን 100 ብር ነው።");
         }
-
-        ctx.reply(
-            `እንኳን ወደ Chernet Bingo በደህና መጡ ${firstName}! 🎯\n\n` +
-            `💰 ቀሪ ሂሳብዎ: ${user.balance.toFixed(2)} ETB\n\n` +
-            `ታች ያለውን ቁልፍ በመጫን ጨዋታውን መጀመር ይችላሉ፦`,
-            Markup.inlineKeyboard([
-                [Markup.button.webApp("🎮 ጨዋታውን ጀምር (Play Bingo)", WEB_APP_URL)]
-            ])
-        );
-    } catch (err) {
-        console.error("Start command error:", err);
-    }
-});
-
-// /balance command
-bot.command('balance', async (ctx) => {
-    const telegramId = String(ctx.from.id);
-    const user = await User.findOne({ telegramId });
-    if (user) {
-        ctx.reply(`💰 ቀሪ ሂሳብዎ (Available): ${user.balance.toFixed(2)} ETB`);
-    } else {
-        ctx.reply("❌ እባክዎን አስቀድመው /start በመጫን ይመዝገቡ።");
-    }
-});
-
-// Admin Add Balance
-bot.command('addbalance', async (ctx) => {
-    if (String(ctx.from.id) !== String(ADMIN_ID)) {
-        return ctx.reply("❌ ለዚህ ትእዛዝ ፈቃድ የሎትም።");
-    }
-
-    const args = ctx.message.text.split(' ');
-    if (args.length < 3) {
-        return ctx.reply("⚠️ አጠቃቀም፦ /addbalance <TELEGRAM_ID> <መጠን>");
-    }
-
-    const targetId = args[1];
-    const amount = parseFloat(args[2]);
-
-    if (isNaN(amount) || amount <= 0) {
-        return ctx.reply("❌ እባክዎ ትክክለኛ የገንዘብ መጠን ያስገቡ።");
-    }
-
-    try {
-        const user = await User.findOneAndUpdate(
-            { telegramId: targetId },
-            { $inc: { balance: amount } },
-            { new: true }
-        );
-
-        if (!user) return ctx.reply("❌ ይህ ተጫዋች በሲስተሙ ውስጥ አልተገኘም።");
-
-        ctx.reply(`✅ ለተጫዋች ${user.firstName} (${targetId}) ${amount} ETB ገቢ ሆኗል! \nአዲሱ ቀሪ ሂሳብ: ${user.balance} ETB`);
-        
-        bot.telegram.sendMessage(targetId, `🎉 ${amount} ETB በስኬት ገቢ ሆኖልዎታል።\n💰 አሁን ያለዎት ቀሪ ሂሳብ: ${user.balance} ETB`);
-    } catch (err) {
-        ctx.reply("❌ ስህተት ተፈጥሯል: " + err.message);
-    }
-});
-
-// Admin Deduct Balance
-bot.command('deductbalance', async (ctx) => {
-    if (String(ctx.from.id) !== String(ADMIN_ID)) {
-        return ctx.reply("❌ ለዚህ ትእዛዝ ፈቃድ የሎትም።");
-    }
-
-    const args = ctx.message.text.split(' ');
-    if (args.length < 3) {
-        return ctx.reply("⚠️ አጠቃቀም፦ /deductbalance <TELEGRAM_ID> <መጠን>");
-    }
-
-    const targetId = args[1];
-    const amount = parseFloat(args[2]);
-
-    try {
-        const user = await User.findOne({ telegramId: targetId });
-        if (!user) return ctx.reply("❌ ተጫዋቹ አልተገኘም።");
-
-        if (user.balance < amount) {
-            return ctx.reply(`❌ የተጫዋቹ ቀሪ ሂሳብ (${user.balance} ETB) ከሚቀነሰው ያነሳል።`);
-        }
-
-        user.balance -= amount;
-        await user.save();
-
-        ctx.reply(`✅ ከተጫዋች ${user.firstName} (${targetId}) ${amount} ETB ተቀንሷል። \nአዲሱ ቀሪ ሂሳብ: ${user.balance} ETB`);
-        
-        bot.telegram.sendMessage(targetId, `💸 ከሂሳብዎ ${amount} ETB ወጪ ተደርጓል።\n💰 ቀሪ ሂሳብ: ${user.balance} ETB`);
-    } catch (err) {
-        ctx.reply("❌ ስህተት ተፈጥሯል: " + err.message);
+        delete userStates[userId];
+        return ctx.reply(`✅ የ ${amount} ETB ወጪ ጥያቄዎ ተቀብለናል።`);
     }
 });
 
 bot.launch().catch((err) => console.error("Bot launch error:", err));
 
-// --- 4. BINGO GAME LOGIC ---
+// --- 3. BINGO GAME LOGIC & DATABASE ---
 const bingoCardsDatabase = {};
+
 function generateBingoCards() {
     for (let cardNo = 1; cardNo <= 400; cardNo++) {
         let card = [];
         const ranges = [[1, 15], [16, 30], [31, 45], [46, 60], [61, 75]];
+
         let columns = ranges.map(([min, max]) => {
             let nums = new Set();
             while (nums.size < 5) {
@@ -159,10 +98,14 @@ function generateBingoCards() {
             }
             return Array.from(nums);
         });
+
         for (let row = 0; row < 5; row++) {
             for (let col = 0; col < 5; col++) {
-                if (row === 2 && col === 2) card.push('★');
-                else card.push(columns[col][row]);
+                if (row === 2 && col === 2) {
+                    card.push('★');
+                } else {
+                    card.push(columns[col][row]);
+                }
             }
         }
         bingoCardsDatabase[cardNo] = card;
@@ -170,10 +113,11 @@ function generateBingoCards() {
 }
 generateBingoCards();
 
+// የጨዋታው ሁኔታ (State)
 let roomState = {
     status: 'WAITING',
-    cardOwners: {},
-    players: {},
+    cardOwners: {}, // { cardNum(Number): socketId }  <- ለባለቤትነት ዋስትና የሚሰጠው ዋናው ቦታ
+    players: {},    // socketId: { userId, userName, cards: [] }
     timeLeft: 30,
     calledNumbers: [],
     availableNumbers: Array.from({ length: 75 }, (_, i) => i + 1),
@@ -181,15 +125,20 @@ let roomState = {
     gameInterval: null
 };
 
-function broadcastRoomState() {
-    const soldCardsCount = Object.keys(roomState.cardOwners).length;
-    const derashAmount = soldCardsCount * 10;
+function getBallLetter(num) {
+    if (num <= 15) return 'B';
+    if (num <= 30) return 'I';
+    if (num <= 45) return 'N';
+    if (num <= 60) return 'G';
+    return 'O';
+}
 
+function broadcastRoomState() {
+    const soldCardsList = Object.keys(roomState.cardOwners).map(Number);
     io.emit('roomState', {
-        soldCards: Object.keys(roomState.cardOwners).map(Number),
+        soldCards: soldCardsList,
         timeLeft: roomState.timeLeft,
-        playersCount: soldCardsCount,
-        derash: derashAmount,
+        playersCount: Object.keys(roomState.players).length,
         status: roomState.status,
         calledNumbers: roomState.calledNumbers
     });
@@ -197,12 +146,15 @@ function broadcastRoomState() {
 
 function startLobbyTimer() {
     if (roomState.timerInterval) return;
+
     roomState.timerInterval = setInterval(() => {
         roomState.timeLeft--;
         broadcastRoomState();
+
         if (roomState.timeLeft <= 0) {
             clearInterval(roomState.timerInterval);
             roomState.timerInterval = null;
+
             if (Object.keys(roomState.cardOwners).length > 0) {
                 startCountdownPhase();
             } else {
@@ -216,12 +168,16 @@ function startLobbyTimer() {
 function startCountdownPhase() {
     roomState.status = 'COUNTDOWN';
     io.emit('startCountdown');
-    setTimeout(() => { startLiveGame(); }, 3000);
+    
+    setTimeout(() => {
+        startLiveGame();
+    }, 3000);
 }
 
 function startLiveGame() {
     roomState.status = 'PLAYING';
     io.emit('gameStarted');
+
     if (roomState.gameInterval) clearInterval(roomState.gameInterval);
 
     roomState.gameInterval = setInterval(() => {
@@ -230,102 +186,164 @@ function startLiveGame() {
             resetRoom();
             return;
         }
+
         const randomIndex = Math.floor(Math.random() * roomState.availableNumbers.length);
         const drawnNum = roomState.availableNumbers.splice(randomIndex, 1)[0];
+        
         roomState.calledNumbers.push(drawnNum);
 
         io.emit('newBall', {
             num: drawnNum,
-            letter: drawnNum <= 15 ? 'B' : drawnNum <= 30 ? 'I' : drawnNum <= 45 ? 'N' : drawnNum <= 60 ? 'G' : 'O',
+            letter: getBallLetter(drawnNum),
             ballsCalled: roomState.calledNumbers.length
         });
+
     }, 4000);
 }
 
-// SOCKET EVENTS
+function checkBingoWinner(cardArray, calledNumbers) {
+    const calledSet = new Set(calledNumbers);
+    calledSet.add('★');
+
+    const isMarked = (index) => calledSet.has(cardArray[index]);
+
+    for (let i = 0; i < 5; i++) {
+        let rowStart = i * 5;
+        if ([0, 1, 2, 3, 4].every(col => isMarked(rowStart + col))) return true;
+    }
+
+    for (let col = 0; col < 5; col++) {
+        if ([0, 1, 2, 3, 4].every(row => isMarked(row * 5 + col))) return true;
+    }
+
+    if ([0, 6, 12, 18, 24].every(index => isMarked(index))) return true;
+    if ([4, 8, 12, 16, 20].every(index => isMarked(index))) return true;
+
+    return false;
+}
+
+// --- 4. SOCKET.IO EVENTS ---
 io.on('connection', (socket) => {
-    
-    socket.on('getUserBalance', async ({ userId }) => {
-        try {
-            const user = await User.findOne({ telegramId: String(userId) });
-            if (user) {
-                socket.emit('userBalanceUpdate', { balance: user.balance });
-            }
-        } catch (e) {
-            console.error("User balance error:", e);
-        }
-    });
 
-    socket.on('getCardData', ({ cardNum }) => {
-        const card = bingoCardsDatabase[cardNum];
-        if (card) {
-            socket.emit('cardDataResponse', { cardNum, card });
-        }
+    // መጀመሪያ ሲገናኝ ያለውን ሁኔታ መላክ
+    socket.emit('roomState', {
+        soldCards: Object.keys(roomState.cardOwners).map(Number),
+        timeLeft: roomState.timeLeft,
+        playersCount: Object.keys(roomState.players).length,
+        status: roomState.status,
+        calledNumbers: roomState.calledNumbers
     });
-
-    broadcastRoomState();
 
     if (roomState.status === 'WAITING' && !roomState.timerInterval) {
         startLobbyTimer();
     }
 
-    socket.on('selectCard', async ({ cardNum, userId, userName }) => {
+    // 1. ካርቴላ መምረጥ (Strict Selection with Collision Check)
+    socket.on('selectCard', ({ cardNum, userId, userName }) => {
         const targetCard = Number(cardNum);
+
+        // ጨዋታው ከተጀመረ አይቻልም
         if (roomState.status !== 'WAITING') {
             return socket.emit('cardSelectFailed', { cardNum: targetCard, message: "ጨዋታው ተጀምሯል!" });
         }
+
+        // ካርቴላው በሌላ ሰው ከተያዘ ወዲያውኑ Reject ማድረግ
         if (roomState.cardOwners[targetCard] && roomState.cardOwners[targetCard] !== socket.id) {
-            return socket.emit('cardSelectFailed', { cardNum: targetCard, message: "ይህ ካርቴላ ተይዟል!" });
+            return socket.emit('cardSelectFailed', {
+                cardNum: targetCard,
+                message: "ይህ ካርቴላ በሌላ ተጫዋች ቀድሞ ተይዟል!"
+            });
         }
 
-        try {
-            const user = await User.findOne({ telegramId: String(userId) });
-            if (!user || user.balance < 10) {
-                return socket.emit('cardSelectFailed', { cardNum: targetCard, message: "በቂ ሂሳብ የሎትም! እባክዎ ሂሳብዎን ይሙሉ።" });
-            }
+        // ለዚህ Socket ካርቴላውን መመደብ
+        roomState.cardOwners[targetCard] = socket.id;
 
-            user.balance -= 10;
-            await user.save();
+        if (!roomState.players[socket.id]) {
+            roomState.players[socket.id] = { userId, userName, cards: [] };
+        }
 
-            roomState.cardOwners[targetCard] = socket.id;
-            if (!roomState.players[socket.id]) {
-                roomState.players[socket.id] = { userId, userName, cards: [] };
-            }
+        if (!roomState.players[socket.id].cards.includes(targetCard)) {
             roomState.players[socket.id].cards.push(targetCard);
-
-            socket.emit('cardSelectSuccess', { cardNum: targetCard, newBalance: user.balance });
-            broadcastRoomState();
-        } catch (e) {
-            socket.emit('cardSelectFailed', { cardNum: targetCard, message: "የክፍያ ስህተት ተፈጥሯል" });
         }
+
+        // ለላከው ሰው ስኬታማ መሆኑን ማሳወቅ
+        socket.emit('cardSelectSuccess', { cardNum: targetCard });
+
+        // ለሁሉም ተጫዋቾች የተወሰደውን ካርቴላ ማሳወቅ
+        broadcastRoomState();
     });
 
-    socket.on('deselectCard', async ({ cardNum, userId }) => {
+    // 2. ካርቴላን መሰረዝ/መልሶ መልቀቅ
+    socket.on('deselectCard', ({ cardNum }) => {
         const targetCard = Number(cardNum);
+
+        // የራሱ ከሆነ ብቻ ነው መሰረዝ የሚችለው
         if (roomState.cardOwners[targetCard] === socket.id) {
             delete roomState.cardOwners[targetCard];
 
-            const updatedUser = await User.findOneAndUpdate(
-                { telegramId: String(userId) },
-                { $inc: { balance: 10 } },
-                { new: true }
-            );
-
             if (roomState.players[socket.id]) {
                 roomState.players[socket.id].cards = roomState.players[socket.id].cards.filter(c => c !== targetCard);
-                if (roomState.players[socket.id].cards.length === 0) delete roomState.players[socket.id];
+                if (roomState.players[socket.id].cards.length === 0) {
+                    delete roomState.players[socket.id];
+                }
             }
-
-            socket.emit('userBalanceUpdate', { balance: updatedUser ? updatedUser.balance : 0 });
             broadcastRoomState();
         }
     });
 
+    // 3. የተመረጡ ካርቴላዎችን ማምጣት
+    socket.on('getUserCards', ({ chosenCards }, callback) => {
+        let userCards = {};
+        if (Array.isArray(chosenCards)) {
+            chosenCards.forEach(cardNo => {
+                const targetCard = Number(cardNo);
+                if (bingoCardsDatabase[targetCard]) {
+                    userCards[targetCard] = bingoCardsDatabase[targetCard];
+                }
+            });
+        }
+        if (typeof callback === 'function') {
+            callback(userCards);
+        }
+    });
+
+    // 4. Bingo Claim
+    socket.on('claimBingo', ({ cardNo, userId, userName }) => {
+        if (roomState.status !== 'PLAYING') return;
+
+        const targetCard = Number(cardNo);
+        const cardArray = bingoCardsDatabase[targetCard];
+
+        if (cardArray && checkBingoWinner(cardArray, roomState.calledNumbers)) {
+            roomState.status = 'FINISHED';
+            clearInterval(roomState.gameInterval);
+            
+            const totalPrize = Object.keys(roomState.cardOwners).length * 20;
+
+            io.emit('gameWinner', {
+                userId,
+                userName: userName || "አሸናፊ",
+                cardNo: targetCard,
+                prize: totalPrize,
+                cardMatrix: cardArray
+            });
+
+            setTimeout(() => {
+                resetRoom();
+            }, 6000);
+        }
+    });
+
+    // 5. ተጫዋች ሲወጣ (Disconnect Handling)
     socket.on('disconnect', () => {
         if (roomState.players[socket.id]) {
             const userCards = roomState.players[socket.id].cards || [];
+            
+            // ጨዋታው ከመጀመሩ በፊት ከወጣ የያዛቸውን ካርቴላዎች መልቀቅ
             if (roomState.status === 'WAITING') {
-                userCards.forEach(cardNum => delete roomState.cardOwners[cardNum]);
+                userCards.forEach(cardNum => {
+                    delete roomState.cardOwners[cardNum];
+                });
                 delete roomState.players[socket.id];
                 broadcastRoomState();
             }
@@ -336,6 +354,7 @@ io.on('connection', (socket) => {
 function resetRoom() {
     if (roomState.gameInterval) clearInterval(roomState.gameInterval);
     if (roomState.timerInterval) clearInterval(roomState.timerInterval);
+
     roomState = {
         status: 'WAITING',
         cardOwners: {},
@@ -346,9 +365,16 @@ function resetRoom() {
         timerInterval: null,
         gameInterval: null
     };
+
     io.emit('roomReset');
     startLobbyTimer();
 }
 
+// --- 5. SERVER LISTEN ---
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`CherBingo Backend running on port ${PORT}`));
+server.listen(PORT, () => {
+    console.log(`CherBingo Backend running on port ${PORT}`);
+});
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
