@@ -18,10 +18,14 @@ const io = new Server(server, {
 
 // --- 2. TELEGRAM BOT SETUP ---
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN_HERE";
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "YOUR_ADMIN_TELEGRAM_ID"; // ለአድሚን ማሳወቂያ የሚሆን
 const WEB_APP_URL = "https://cherbingo-frontend-i6ci.vercel.app";
 
 const bot = new Telegraf(BOT_TOKEN);
 const userStates = {};
+
+// የተጫዋቾች ቀሪ ሂሳብ (Temporary Database)
+const userBalances = {}; // { userId: balance }
 
 bot.start((ctx) => {
     const firstName = ctx.from.first_name || "ተጫዋች";
@@ -46,7 +50,9 @@ bot.command('play', (ctx) => {
 });
 
 bot.command('balance', (ctx) => {
-    ctx.reply(`💰 ቀሪ ሂሳብ (Available): 50.00 ETB`);
+    const userId = ctx.from.id;
+    const balance = userBalances[userId] || 0.00;
+    ctx.reply(`💰 ቀሪ ሂሳብዎ (Available): ${balance.toFixed(2)} ETB`);
 });
 
 bot.command('deposit', (ctx) => {
@@ -116,7 +122,7 @@ generateBingoCards();
 // የጨዋታው ሁኔታ (State)
 let roomState = {
     status: 'WAITING',
-    cardOwners: {}, // { cardNum(Number): socketId }  <- ለባለቤትነት ዋስትና የሚሰጠው ዋናው ቦታ
+    cardOwners: {}, // { cardNum(Number): socketId }
     players: {},    // socketId: { userId, userName, cards: [] }
     timeLeft: 30,
     calledNumbers: [],
@@ -238,7 +244,64 @@ io.on('connection', (socket) => {
         startLobbyTimer();
     }
 
-    // 1. ካርቴላ መምረጥ (Strict Selection with Collision Check)
+    // ==========================================
+    // ➕ 1. DEPOSIT & WITHDRAW HANDLERS (NEW)
+    // ==========================================
+
+    // የገቢ (Deposit) ጥያቄዎችን ማስተናገጃ
+    socket.on('requestDeposit', ({ userId, userName, amount, txn }) => {
+        console.log(`[DEPOSIT] User: ${userName} (${userId}), Amount: ${amount}, Txn: ${txn}`);
+        
+        // ለአድሚን በቴሌግራም መልእክት መላክ (ለማረጋገጫ)
+        if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== "YOUR_ADMIN_TELEGRAM_ID") {
+            bot.telegram.sendMessage(
+                ADMIN_CHAT_ID,
+                `📥 **አዲስ የገቢ (Deposit) ጥያቄ**\n\n` +
+                `👤 ተጫዋች: ${userName} (ID: \`${userId}\`)\n` +
+                `💰 መጠን: ${amount} ETB\n` +
+                `🧾 Txn ID: \`${txn}\`\n\n` +
+                `ሂሳቡን ለማፅደቅ ከተረጋገጠ በኋላ Balance ይጨምሩለት።`,
+                { parse_mode: 'Markdown' }
+            ).catch(err => console.error("Admin notification error:", err));
+        }
+
+        // ለሙከራ እንዲመች ተጫዋቹ ሲልክ የወቅቱን Balance መላክ
+        if (!userBalances[userId]) userBalances[userId] = 0;
+        socket.emit('balanceUpdate', { balance: userBalances[userId] });
+    });
+
+    // የወጪ (Withdraw) ጥያቄዎችን ማስተናገጃ
+    socket.on('requestWithdraw', ({ userId, userName, amount, account }) => {
+        const withdrawAmt = parseFloat(amount);
+        const currentBal = userBalances[userId] || 0;
+
+        console.log(`[WITHDRAW] User: ${userName} (${userId}), Amount: ${withdrawAmt}, Acc: ${account}`);
+
+        if (currentBal < withdrawAmt) {
+            return socket.emit('withdrawError', { message: "በቂ ያልሆነ ቀሪ ሂሳብ!" });
+        }
+
+        // ቀሪ ሂሳብ መቀነስ
+        userBalances[userId] -= withdrawAmt;
+        socket.emit('balanceUpdate', { balance: userBalances[userId] });
+
+        // ለአድሚን በቴሌግራም መልእክት መላክ
+        if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== "YOUR_ADMIN_TELEGRAM_ID") {
+            bot.telegram.sendMessage(
+                ADMIN_CHAT_ID,
+                `📤 **አዲስ የወጪ (Withdraw) ጥያቄ**\n\n` +
+                `👤 ተጫዋች: ${userName} (ID: \`${userId}\`)\n` +
+                `💰 መጠን: ${withdrawAmt} ETB\n` +
+                `ከፋይ አካውንት: \`${account}\`\n\n` +
+                `እባክዎን ክፍያውን ይፈጽሙላቸው።`,
+                { parse_mode: 'Markdown' }
+            ).catch(err => console.error("Admin notification error:", err));
+        }
+    });
+
+    // ==========================================
+
+    // 2. ካርቴላ መምረጥ (Strict Selection with Collision Check)
     socket.on('selectCard', ({ cardNum, userId, userName }) => {
         const targetCard = Number(cardNum);
 
@@ -266,6 +329,12 @@ io.on('connection', (socket) => {
             roomState.players[socket.id].cards.push(targetCard);
         }
 
+        // ለተጫዋቹ ሂሳቡን መላክ
+        if (userId) {
+            const userBal = userBalances[userId] || 0.00;
+            socket.emit('balanceUpdate', { balance: userBal });
+        }
+
         // ለላከው ሰው ስኬታማ መሆኑን ማሳወቅ
         socket.emit('cardSelectSuccess', { cardNum: targetCard });
 
@@ -273,11 +342,10 @@ io.on('connection', (socket) => {
         broadcastRoomState();
     });
 
-    // 2. ካርቴላን መሰረዝ/መልሶ መልቀቅ
+    // 3. ካርቴላን መሰረዝ/መልሶ መልቀቅ
     socket.on('deselectCard', ({ cardNum }) => {
         const targetCard = Number(cardNum);
 
-        // የራሱ ከሆነ ብቻ ነው መሰረዝ የሚችለው
         if (roomState.cardOwners[targetCard] === socket.id) {
             delete roomState.cardOwners[targetCard];
 
@@ -291,7 +359,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 3. የተመረጡ ካርቴላዎችን ማምጣት
+    // 4. የተመረጡ ካርቴላዎችን ማምጣት
     socket.on('getUserCards', ({ chosenCards }, callback) => {
         let userCards = {};
         if (Array.isArray(chosenCards)) {
@@ -307,7 +375,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. Bingo Claim
+    // 5. Bingo Claim
     socket.on('claimBingo', ({ cardNo, userId, userName }) => {
         if (roomState.status !== 'PLAYING') return;
 
@@ -319,6 +387,12 @@ io.on('connection', (socket) => {
             clearInterval(roomState.gameInterval);
             
             const totalPrize = Object.keys(roomState.cardOwners).length * 20;
+
+            // ለአሸናፊው ሂሳብ መጨመር
+            if (userId) {
+                userBalances[userId] = (userBalances[userId] || 0) + totalPrize;
+                socket.emit('balanceUpdate', { balance: userBalances[userId] });
+            }
 
             io.emit('gameWinner', {
                 userId,
@@ -334,12 +408,11 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. ተጫዋች ሲወጣ (Disconnect Handling)
+    // 6. ተጫዋች ሲወጣ (Disconnect Handling)
     socket.on('disconnect', () => {
         if (roomState.players[socket.id]) {
             const userCards = roomState.players[socket.id].cards || [];
             
-            // ጨዋታው ከመጀመሩ በፊት ከወጣ የያዛቸውን ካርቴላዎች መልቀቅ
             if (roomState.status === 'WAITING') {
                 userCards.forEach(cardNum => {
                     delete roomState.cardOwners[cardNum];
