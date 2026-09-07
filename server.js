@@ -272,7 +272,19 @@ io.on('connection', (socket) => {
         if (!userBalances[userId]) userBalances[userId] = 0;
         socket.emit('balanceUpdate', { balance: userBalances[userId] });
     });
+// በBackend በኩል የሚደረግ የአውቶሜሽን ምሳሌ
+socket.on('requestDeposit', async (data) => {
+  // 1. የክፍያ API ጥያቄ በመላክ ማረጋገጥ
+  const isVerified = await verifyWithTelebirr(data.txn, data.amount);
 
+  if (isVerified) {
+    // 2. ሂሳቡን አውቶማቲክ ማዘመን
+    updateUserBalance(data.userId, data.amount);
+    socket.emit('balanceUpdate', { newBalance: updatedBalance });
+  } else {
+    socket.emit('errorMessage', 'የተሳሳተ የትራንዛክሽን ቁጥር ወይም ያልደረሰ ክፍያ!');
+  }
+});
     // --- WITHDRAW HANDLER ---
     socket.on('requestWithdraw', async ({ userId, userName, amount, account }) => {
         const withdrawAmt = parseFloat(amount);
