@@ -14,4 +14,9 @@
     "socket.io": "^4.8.3",
     "telegraf": "^4.16.3"
   }
+  {
+  "sender": "%SENDER%",
+  "message": "%SMS%",
+  "secret": "MY_SECRET_KEY_123"
+}
 }
