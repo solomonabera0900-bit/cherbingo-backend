@@ -41,6 +41,7 @@ async function sendTelegramMsg(chatId, text) {
     }
 }
 
+
 bot.start((ctx) => {
     const firstName = ctx.from.first_name || "ተጫዋች";
     ctx.reply(
@@ -100,6 +101,8 @@ bot.on('text', (ctx) => {
         return ctx.reply(`✅ የ ${amount} ETB ወጪ ጥያቄዎ ተቀብለናል።`);
     }
 });
+
+
 
 bot.launch().catch((err) => console.error("Bot launch error:", err));
 
@@ -525,6 +528,25 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`CherBingo Backend running on port ${PORT}`);
 });
+// --- 6. SELF-PING (ሰርቨሩ እንዳይተኛ በየ 10 ደቂቃው እራሱን እንዲቀሰቅስ ማድረግ) ---
+const https = require('https');
+setInterval(() => {
+    https.get('https://cherbingo-backend-i6ci.onrender.com', (res) => {
+        console.log('[PING] Keep-alive ping sent to server');
+    }).on('error', (err) => {
+        console.error('[PING ERROR]:', err.message);
+    });
+}, 10 * 60 * 1000); // በየ 10 ደቂቃው (600,000 ms)
+
+
+// --- 7. SERVER LISTEN ---
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+    console.log(`CherBingo Backend running on port ${PORT}`);
+});
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
